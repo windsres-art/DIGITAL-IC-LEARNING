@@ -1,0 +1,15 @@
+# Yosys：把 FIFO 综合成 Sky130 hd 门级网表，供 OpenSTA 分析
+# 由 run.sh 调用，LIB 路径通过 tcl 变量传入（见 run.sh）
+
+read_verilog ../../03_Common_Circuits/lab/FIFO/FIFO.v
+hierarchy -check -top FIFO_async
+synth -top FIFO_async -flatten
+
+# 触发器映射到库里的 DFF（dfrtp = 带异步复位的 D 触发器）
+dfflibmap -liberty build/lib.lib -dont_use *lpflow*
+# 组合逻辑映射到标准单元
+abc -liberty build/lib.lib -dont_use *lpflow*
+opt_clean
+
+stat -liberty build/lib.lib
+write_verilog -noattr build/fifo_netlist.v

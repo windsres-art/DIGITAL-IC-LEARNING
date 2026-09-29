@@ -1,0 +1,17 @@
+# Yosys：第 08 章的 16 bit ALU → Sky130 hd 门级网表，作为后端的输入
+# 由 run.sh 调用（工作目录 = 本目录）
+
+read_liberty -lib build/lib_tt.lib
+read_verilog ../../../08_Logic_Synthesis/lab/Yosys_Flow/alu.v
+hierarchy -check -top alu
+synth -top alu -flatten
+
+dfflibmap -liberty build/lib_tt.lib -dont_use *lpflow*
+abc -liberty build/lib_tt.lib -dont_use *lpflow*
+# 常量不能直接连电源网：后端布线器只把 VDD/VSS 当特殊网，常量信号要由 tie 单元驱动
+hilomap -singleton -hicell sky130_fd_sc_hd__conb_1 HI -locell sky130_fd_sc_hd__conb_1 LO
+opt_clean
+check -assert
+
+tee -o reports/0_synth.stat stat -liberty build/lib_tt.lib
+write_verilog -noattr build/alu_synth.v

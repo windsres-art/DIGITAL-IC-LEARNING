@@ -1,0 +1,10 @@
+# Simulation, synthesis, and place-and-route outputs.
+# Chapter notes say these are generated and should not be committed.
+build/
+build_mut/
+reports/
+*.vcd
+*.fst
+*.vvp
+*.log
+*_sim

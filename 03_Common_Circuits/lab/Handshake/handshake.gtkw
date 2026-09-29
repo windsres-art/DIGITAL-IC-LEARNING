@@ -1,0 +1,30 @@
+[dumpfile] "handshake.vcd"
+[timestart] 0
+[size] 1400 800
+[sst_expanded] 1
+[signals_width] 260
+@200
+-h_bub (bubble stage)
+@28
+tb_handshake.h_bub.clk
+tb_handshake.h_bub.rst_n
+tb_handshake.h_bub.src_valid
+tb_handshake.h_bub.snk_ready
+tb_handshake.h_bub.in_fire
+tb_handshake.h_bub.out_fire
+@22
+tb_handshake.h_bub.src_data[15:0]
+tb_handshake.h_bub.v[3:0]
+tb_handshake.h_bub.r[3:0]
+@200
+-h_pipe (pipe stage)
+@28
+tb_handshake.h_pipe.clk
+tb_handshake.h_pipe.src_valid
+tb_handshake.h_pipe.snk_ready
+tb_handshake.h_pipe.in_fire
+tb_handshake.h_pipe.out_fire
+@22
+tb_handshake.h_pipe.src_data[15:0]
+tb_handshake.h_pipe.v[3:0]
+tb_handshake.h_pipe.r[3:0]

@@ -1,0 +1,31 @@
+# 把两种复位风格和复位同步器分别综合到 Sky130 hd 库，比较映射出的单元
+# 运行：bash run_sim.sh（会自动调用）
+
+read_verilog reset_styles.v reset_sync.v
+
+# ---------- 同步复位 ----------
+design -save src
+hierarchy -top reg_sync_rst
+synth -top reg_sync_rst
+dfflibmap -liberty build/lib.lib
+abc -liberty build/lib.lib
+opt_clean
+tee -o reports/reg_sync_rst.stat stat -liberty build/lib.lib
+
+# ---------- 异步复位 ----------
+design -load src
+hierarchy -top reg_async_rst
+synth -top reg_async_rst
+dfflibmap -liberty build/lib.lib
+abc -liberty build/lib.lib
+opt_clean
+tee -o reports/reg_async_rst.stat stat -liberty build/lib.lib
+
+# ---------- 复位同步器 ----------
+design -load src
+hierarchy -top reset_sync
+synth -top reset_sync
+dfflibmap -liberty build/lib.lib
+abc -liberty build/lib.lib
+opt_clean
+tee -o reports/reset_sync.stat stat -liberty build/lib.lib
