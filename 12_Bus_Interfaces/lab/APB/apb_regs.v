@@ -17,25 +17,27 @@ module apb_regs #(
     parameter WAIT = 0
 )(
     input               pclk,
-    input               presetn,
-    input      [AW-1:0] paddr,
-    input               psel,
-    input               penable,
-    input               pwrite,
-    input      [31:0]   pwdata,
-    input      [3:0]    pstrb,
-    output              pready,
-    output reg [31:0]   prdata,
-    output              pslverr,
-    // 硬件侧
-    output     [31:0]   ctrl_o,
-    input      [31:0]   status_i,
-    input      [31:0]   irq_set_i,          // 每 bit 一拍脉冲
-    output              irq_o
+    input               presetn,            // 低有效复位
+    input      [AW-1:0] paddr,              // 字节地址。本模块只看 [AW-1:2]，按字对齐
+    input               psel,               // 1 = 主机选中本从机
+    input               penable,            // 0 = SETUP，1 = ACCESS
+    input               pwrite,             // 1 = 写，0 = 读
+    input      [31:0]   pwdata,             // 写数据
+    input      [3:0]    pstrb,              // 写字节使能，bit 0 = pwdata[7:0]
+    output              pready,             // ACCESS 中数到 WAIT 拍才为 1
+    output reg [31:0]   prdata,             // 读数据，组合输出，完成拍被主机采样
+    output              pslverr,            // 仅完成拍可能为 1：地址未映射，或写 STATUS
+    // 硬件侧：寄存器和模块外面的电路
+    output     [31:0]   ctrl_o,             // CTRL 的当前值，给外设逻辑用
+    input      [31:0]   status_i,           // 只读状态，直接送到 PRDATA
+    input      [31:0]   irq_set_i,          // 每 bit 一拍脉冲，把 INT_STAT 对应位置 1
+    output              irq_o               // INT_STAT 和 INT_EN 按位与之后，有任一位为 1
 );
+    // wcnt 要能数到 WAIT。WAIT = 0 时仍留 1 位，避免 0 宽度
     localparam CW = (WAIT > 0) ? $clog2(WAIT + 1) : 1;
-    localparam [CW-1:0] WAIT_C = WAIT[CW-1:0];
+    localparam [CW-1:0] WAIT_C = WAIT[CW-1:0];   // 数到这个值就给 PREADY
 
+    // 字节偏移右移 2 位，变成字地址，和 paddr[AW-1:2] 比较
     localparam [AW-3:0] A_CTRL     = 'h00 >> 2;
     localparam [AW-3:0] A_SCRATCH  = 'h04 >> 2;
     localparam [AW-3:0] A_STATUS   = 'h08 >> 2;
@@ -45,9 +47,9 @@ module apb_regs #(
     reg [31:0] ctrl, scratch, int_stat, int_en;
 
     // ---------------- 等待状态 ----------------
-    reg  [CW-1:0] wcnt;
+    reg  [CW-1:0] wcnt;                  // ACCESS 阶段已经等待的拍数
     wire          access = psel & penable;
-    assign pready = (wcnt == WAIT_C);
+    assign pready = (wcnt == WAIT_C);    // WAIT = 0 时第一拍 ACCESS 就是完成拍
 
     always @(posedge pclk or negedge presetn) begin
         if (!presetn)              wcnt <= {CW{1'b0}};
@@ -56,7 +58,8 @@ module apb_regs #(
     end
 
     // ---------------- 地址译码 ----------------
-    wire [AW-3:0] widx = paddr[AW-1:2];     // 按字寻址，忽略低 2 位
+    wire [AW-3:0] widx = paddr[AW-1:2];     // 字地址。0x00 和 0x01/0x02/0x03 都命中 CTRL
+    // 低 2 位不参与译码。接进这个常量 0 的与，是为了让 lint 认为这两位被读过
     wire          unused_paddr = &{1'b0, paddr[1:0]};
     wire hit_ctrl  = (widx == A_CTRL);
     wire hit_scr   = (widx == A_SCRATCH);
@@ -65,16 +68,17 @@ module apb_regs #(
     wire hit_en    = (widx == A_INT_EN);
     wire hit_any   = hit_ctrl | hit_scr | hit_stat | hit_int | hit_en;
 
-    wire xfer   = access & pready;              // 传输完成拍
-    wire wr     = xfer & pwrite;
-    wire bad_wr = pwrite & hit_stat;            // 写只读寄存器
+    wire xfer   = access & pready;              // 完成拍：写在这个沿生效，读在这个沿被采样
+    wire wr     = xfer & pwrite;                // 完成拍上的写
+    wire bad_wr = pwrite & hit_stat;            // 写只读的 STATUS
 
-    // PSLVERR 只在传输完成拍有意义，其它时候保持 0
+    // 完成拍，并且地址没有寄存器，或者在写 STATUS，才报错。其它拍为 0
     assign pslverr = xfer & (~hit_any | bad_wr);
 
-    // PSTRB 展开成位掩码
+    // 把 4 位字节使能摊成 32 位掩码。pstrb[0]=1 时低 8 位全 1
     wire [31:0] bmask = {{8{pstrb[3]}}, {8{pstrb[2]}}, {8{pstrb[1]}}, {8{pstrb[0]}}};
 
+    // 掩码为 1 的位用新数据，为 0 的位留旧值
     function [31:0] merge(input [31:0] old, input [31:0] nw, input [31:0] m);
         merge = (old & ~m) | (nw & m);
     endfunction
@@ -91,7 +95,8 @@ module apb_regs #(
         end
     end
 
-    // W1C：软件写 1 的位清零；硬件置位写在后面，同拍冲突时置位优先（不丢中断）
+    // 软件要清的位：写 INT_STAT，且该字节的 PSTRB 为 1，数据位为 1
+    // 后面 int_stat <= (int_stat & ~w1c) | irq_set_i，同拍置位优先
     wire [31:0] w1c = (wr & hit_int) ? (pwdata & bmask) : 32'h0;
     always @(posedge pclk or negedge presetn) begin
         if (!presetn) int_stat <= 32'h0;

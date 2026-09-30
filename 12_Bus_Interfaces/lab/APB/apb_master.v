@@ -14,33 +14,34 @@ module apb_master #(
 )(
     input                 clk,
     input                 rst_n,
-    // 命令口
-    input                 cmd_valid,
-    output                cmd_ready,
-    input                 cmd_write,
-    input      [AW-1:0]   cmd_addr,
-    input      [DW-1:0]   cmd_wdata,
-    input      [DW/8-1:0] cmd_wstrb,
-    // 响应口
-    output reg            rsp_valid,
-    output reg [DW-1:0]   rsp_rdata,
-    output reg            rsp_err,
-    // APB
-    output reg [AW-1:0]   paddr,
-    output reg            psel,
-    output reg            penable,
-    output reg            pwrite,
-    output reg [DW-1:0]   pwdata,
-    output reg [DW/8-1:0] pstrb,
-    input                 pready,
-    input      [DW-1:0]   prdata,
-    input                 pslverr
+    // 命令口：上层发一笔读或写。cmd_valid && cmd_ready 的时钟沿锁存
+    input                 cmd_valid,          // 上层有一笔命令
+    output                cmd_ready,          // 本拍能收下：空闲，或当前传输这拍结束
+    input                 cmd_write,          // 1 = 写，0 = 读
+    input      [AW-1:0]   cmd_addr,           // 字节地址。从机按字对齐，低 2 位不用
+    input      [DW-1:0]   cmd_wdata,          // 写数据。读命令时忽略
+    input      [DW/8-1:0] cmd_wstrb,          // 写字节使能，bit 0 对应最低字节
+    // 响应口：单拍脉冲，没有 ready。上层必须每拍都能收
+    output reg            rsp_valid,          // 上一拍 ACCESS 完成，只维持这一拍
+    output reg [DW-1:0]   rsp_rdata,          // 读回数据。写完成时为 0
+    output reg            rsp_err,            // 完成拍采到的 PSLVERR
+    // APB4。{psel, penable} 就是状态：00 IDLE，10 SETUP，11 ACCESS
+    output reg [AW-1:0]   paddr,              // 地址。从收下命令到传输结束保持不变
+    output reg            psel,               // 1 = 选中从机
+    output reg            penable,            // 0 = SETUP，1 = ACCESS
+    output reg            pwrite,             // 1 = 写，0 = 读
+    output reg [DW-1:0]   pwdata,             // 写数据
+    output reg [DW/8-1:0] pstrb,              // 写字节使能。读传输时规范要求为 0
+    input                 pready,             // 从机。ACCESS 中为 0 表示再等一拍
+    input      [DW-1:0]   prdata,             // 从机读数据，完成拍采样
+    input                 pslverr             // 从机错误标志，只在完成拍有效
 );
-    wire done = psel & penable & pready;        // 本拍 ACCESS 完成
+    wire done = psel & penable & pready;        // 本拍是 ACCESS 的最后一拍
 
-    // 总线空闲，或者当前传输这拍就结束，都能接新命令
+    // ~psel：停在 IDLE，可以接命令
+    // done：完成拍就能接下一条，下一拍直接进 SETUP，psel 不拉低（背靠背）
     assign cmd_ready = ~psel | done;
-    wire   cmd_fire  = cmd_valid & cmd_ready;
+    wire   cmd_fire  = cmd_valid & cmd_ready;    // 本拍沿上收下一条命令
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

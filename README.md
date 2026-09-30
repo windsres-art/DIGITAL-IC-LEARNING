@@ -179,9 +179,9 @@ NN_Chapter_Name/
 | 形式验证 | 属性检查、等价性检查 |
 | 门级仿真 | SDF 反标、X 传播 |
 
-## 12_Bus_Interfaces —— 总线与接口 ★★★　🚧
+## 12_Bus_Interfaces —— 总线与接口 ★★★　✅
 
-已完成：`README.md` 第 1–3 节 APB、AHB、AXI4 与 AXI-Stream（每节含原理与时序、RTL、真实仿真输出、面试要点）及三总线速查表；`lab/` 下 `APB`（APB4 主机状态机 + RW/RO/W1C 寄存器从机，WAIT=0/2 吞吐 2.00/4.00 拍每笔）、`AHB`（AHB-Lite 同步读 SRAM 从机带写后读旁路、译码器 + 数据阶段响应 MUX + 两拍 ERROR 默认从机，8 种 burst + BUSY 的周期级主机 BFM）、`AXI`（AXI4 RAM 从机支持 FIXED/INCR/WRAP、窄传输、非对齐、WSTRB、4 笔 outstanding；五通道独立随机主机 + 按 ID 记分板 + 协议检查；outstanding 1 vs 4 单拍读吞吐 0.333 vs 0.997），testbench 均自检查并在 WSL 跑通，另有 8 个变异测试全部被抓到。AXI-Stream 只讲协议并链接到 03 章的握手 / skid buffer / 位宽转换实现。待写：UART、SPI、I2C。
+已完成：`README.md` 全部 6 节（每节含原理与时序、RTL、真实仿真输出、面试要点）及片上总线 / 片外接口两张速查表。片上总线：`lab/` 下 `APB`（APB4 主机状态机 + RW/RO/W1C 寄存器从机，WAIT=0/2 吞吐 2.00/4.00 拍每笔）、`AHB`（AHB-Lite 同步读 SRAM 从机带写后读旁路、译码器 + 数据阶段响应 MUX + 两拍 ERROR 默认从机，8 种 burst + BUSY 的周期级主机 BFM）、`AXI`（AXI4 RAM 从机支持 FIXED/INCR/WRAP、窄传输、非对齐、WSTRB、4 笔 outstanding；五通道独立随机主机 + 按 ID 记分板 + 协议检查；outstanding 1 vs 4 单拍读吞吐 0.333 vs 0.997）。AXI-Stream 只讲协议并链接到 03 章的握手 / skid buffer / 位宽转换实现。片外接口：`UART`（16 倍过采样 RX，两级同步 + 中心三取二 + 假起始过滤，8N1/8E1/8O2；波特率偏差扫描实测 8N1 容限 −5% ~ +5%，并用判决点漂移公式解释不对称）、`SPI`（四模式可配主机 + 过采样从机；引脚级监视器、模式不匹配矩阵，实测过采样从机需要系统时钟 ≥ 8 倍 SCLK）、`I2C`（字节命令主机支持重复起始、时钟拉伸、多主机仲裁 + 自增指针寄存器从机；`tri1` 开漏总线上两主机一从机，400 笔随机事务 + 100 次仲裁）。所有 testbench 自检查并在 WSL 跑通，14 个变异测试全部被抓到。
 
 | 小节 | 内容提纲 |
 |------|----------|

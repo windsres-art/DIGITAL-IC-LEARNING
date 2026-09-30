@@ -117,7 +117,8 @@ module tb_uart;
                 v = b[j];
                 line = v;
                 if (glitch) begin
-                    off = (($urandom % 81) - 40) * 1.0;                 // 中心 ±40 ns
+                    off = $urandom % 81;                                // 先转 real 再减：
+                    off = off - 40.0;                                   // $urandom 是无符号数，直接减会回绕
                     #(T / 2 + off - 15); line = ~v; #(30); line = v; #(T / 2 - off - 15);
                 end else #(T);
             end

@@ -10,7 +10,7 @@
 - 位宽转换带 last/keep：`../03_Common_Circuits/README.md` 第 14 节（AXI-Stream）
 - 跨时钟域：`../06_CDC/README.md`（UART/SPI/I2C 的输入同步）
 
-建议顺序：第 1 节 APB（最简单，先把"两段式传输 + 等待"弄懂）→ 第 2 节 AHB（加上地址/数据两级流水）→ 第 3 节 AXI（再拆成五个独立通道，加上 ID 和 outstanding）。三者是一条演进线，每一步都在回答"上一个协议的吞吐瓶颈在哪"。面试前直接看每节末尾的"面试要点"和第 8 节速查表。
+建议顺序：第 1 节 APB（最简单，先把"两段式传输 + 等待"弄懂）→ 第 2 节 AHB（加上地址/数据两级流水）→ 第 3 节 AXI（再拆成五个独立通道，加上 ID 和 outstanding）。三者是一条演进线，每一步都在回答"上一个协议的吞吐瓶颈在哪"。第 4–6 节是片外接口，也是一条线：UART 不传时钟、靠过采样猜位中心 → SPI 由主机送时钟、换来速度 → I2C 用开漏两根线挂多个器件，换来寻址、应答和仲裁。面试前直接看每节末尾的"面试要点"和第 8 节速查表。
 
 配套实验（`lab/` 下，每个文件夹 `bash run_sim.sh` 一键 lint + 仿真，`bash mutation.sh` 跑变异测试）：
 
@@ -19,8 +19,11 @@
 | `lab/APB/` | APB4 主机（命令口 → SETUP/ACCESS 状态机，背靠背传输）+ 寄存器从机（RW / RO / W1C、PSTRB、可配等待、PSLVERR）；WAIT=0 / 2 两种配置；3 个变异 |
 | `lab/AHB/` | AHB-Lite SRAM 从机（同步读 + 写后读旁路、随机等待）、译码器 + 响应 MUX + 默认从机（两拍 ERROR）；周期级主机 BFM 跑 8 种 burst、BUSY、窄传输；2 个变异 |
 | `lab/AXI/` | AXI4 RAM 从机（FIXED/INCR/WRAP、窄传输、非对齐、WSTRB、命令队列支持 4 笔 outstanding）；五通道独立随机主机、按 ID 记分板、五通道协议检查；outstanding 1 vs 4 吞吐对比；3 个变异 |
+| `lab/UART/` | 波特率发生器 + TX + 16 倍过采样 RX（两级同步、中心三取二、假起始过滤、帧 / 校验错误）；8N1 / 8E1 / 8O2；±6% 波特率偏差扫描、毛刺与假起始注入；2 个变异 |
+| `lab/SPI/` | 四模式可配的主机 + 过采样从机（MISO 三态）；引脚级监视器；主从模式不匹配矩阵、分频扫描；2 个变异 |
+| `lab/I2C/` | 字节命令主机（重复起始、时钟拉伸、多主机仲裁）+ 带自增指针的寄存器从机（可配拉伸）；两主机一从机开漏总线（`tri1` 线与）；2 个变异 |
 
-本章进度：第 1–3 节（APB、AHB、AXI4 与 AXI-Stream）已完成；第 4–6 节（UART、SPI、I2C）待写。
+本章进度：第 1–6 节全部完成。
 
 ---
 
@@ -29,9 +32,9 @@
 1. [APB](#1-apb)
 2. [AHB](#2-ahb)
 3. [AXI4 与 AXI-Stream](#3-axi4-与-axi-stream)
-4. UART（待写）
-5. SPI（待写）
-6. I2C（待写）
+4. [UART](#4-uart)
+5. [SPI](#5-spi)
+6. [I2C](#6-i2c)
 7. [运行全部实验](#7-运行全部实验)
 8. [速查表](#8-速查表)
 
@@ -877,15 +880,761 @@ M3 第一次跑时 testbench 没有看门狗，丢拍后在途计数永远清不
 
 ## 4. UART
 
-待写：帧格式、波特率、过采样、收发器实现。
+### 4.1 解决什么问题，面试怎么考
+
+前三节是片上总线，从这一节开始是**片外**低速接口：芯片和芯片、芯片和板上器件之间的连线。UART（Universal Asynchronous Receiver/Transmitter）只用一根线单向传数据（收发各一根，TX 接对方 RX），**不传时钟**。收发双方事先约定波特率，接收方用自己的本地时钟去"猜"每一位的中心。它是调试串口、蓝牙 / GPS / 4G 模组、BootROM 下载口的标配。
+
+面试考法：
+
+1. 画一帧 UART 波形（起始、数据 LSB 先、校验、停止），8N1 是什么意思。
+2. 波特率怎么由系统时钟分频得到，整数分频误差多大。
+3. **接收器为什么要过采样**，16 倍过采样在哪里采、为什么在中心、为什么采三次。
+4. 收发双方波特率能差多少（容限怎么算）。
+5. 手写一个 UART RX：同步器、起始位检测、假起始过滤、帧错误 / 校验错误。
+
+### 4.2 原理
+
+**帧格式**：空闲时线为高；一帧 = 1 个起始位（0）+ 5–9 个数据位（**LSB 先发**，最常见 8 位）+ 可选校验位 + 1 / 1.5 / 2 个停止位（1）。简记为"数据位数 + 校验 + 停止位数"：8N1 = 8 数据、无校验、1 停止；8E1 = 偶校验；8O2 = 奇校验、2 停止。
+
+以 8E1 发送 0x35（二进制 0011_0101，1 的个数为 4，偶校验位为 0）为例：
+
+| 位 | 空闲 | 起始 | D0 | D1 | D2 | D3 | D4 | D5 | D6 | D7 | 校验 | 停止 | 空闲 |
+|----|------|------|----|----|----|----|----|----|----|----|------|------|------|
+| TXD | 1 | **0** | 1 | 0 | 1 | 0 | 1 | 1 | 0 | 0 | 0 | **1** | 1 |
+
+- **起始位的下降沿**是整帧唯一的同步点：接收方从这个沿开始按约定的位宽计时，一直数到停止位。每一帧都重新对齐一次，所以误差不会跨帧累积。
+- **停止位**保证下一帧的起始位一定有一个 1→0 的下降沿；停止位位置采到 0 就是**帧错误**（framing error），常见原因是波特率不对或线路噪声。线上持续低电平超过一帧叫 break，常用作特殊信号。
+- **校验**：奇校验是"数据 + 校验位中 1 的个数为奇数"，偶校验为偶数，只能查出奇数个位错。
+
+**波特率与分频**：波特率 = 每秒位数，一位宽 = 1 / 波特率（115200 bps 一位约 8.68 µs）。接收端需要比波特率快得多的采样节拍，通常是 16 倍：`tick 频率 = 16 × 波特率`，`DIV = f_clk / (16 × 波特率)`。例：50 MHz、115200 → 27.13，取 27，实际波特率偏高 0.47%。波特率越高，整数分频的舍入误差越大；需要精确时用累加器做小数分频（`../03_Common_Circuits/README.md` 第 5 节）。
+
+**16 倍过采样接收**：
+
+```
+            起始位                           D0
+rxd   ‾‾‾‾‾‾|________________________________|‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾|
+tick        0 1 2 3 4 5 6 7 8 9 ... 15        0 1 2 3 4 5 6 7 8 9 ... 15
+            ^              ^ ^ ^                             ^ ^ ^
+     检测到 0（精度 1 tick）  三次采样多数表决 → 仍为 0 才确认起始   D0 的中心
+```
+
+1. 空闲时每个 tick 看一次线，第一次看到 0，就把这个 tick 当成起始位的第 0 个 tick。检测精度是 1 个 tick，也就是 1/16 位。
+2. 从这里起每 16 个 tick 是一位，**在第 7、8、9 个 tick 采三次、三取二**，判决点就落在位中心。中心离两侧边沿最远，对波特率误差和边沿抖动的余量最大；三次表决能滤掉短于一个 tick 的毛刺。
+3. 起始位中心再确认一次：如果表决结果是 1，说明刚才的 0 只是毛刺（**假起始**），回到空闲。
+4. 停止位判决完立即回到空闲，不必等停止位结束。这样下一帧的起始位即使因为误差提前一点到来，也能被检测到。
+
+**波特率容限**：接收方从起始沿开始计时，每一位的判决点都会因为波特率偏差而漂移，**越靠后的位漂得越多**。设相对偏差为 δ，第 n 位（起始位为第 0 位）的判决点在第 n + 0.5 位附近，它必须落在发送方真实的第 n 位之内：`n × (1+δ) < n + 0.5 < (n+1) × (1+δ)`。粗略估计 `|δ| < 0.5 / (n+1)`。8N1 最后一个必须判对的是停止位（n = 9），`0.5/10 = 5%`；再扣掉起始沿检测的 1/16 位不确定度，教科书上常见的估计是 `(0.5 − 1/16) / 9.5 ≈ 4.6%`。**这是收发双方误差之和**，所以实际工程里要求每一端 ≤ 2% 左右，合计 ≤ 2–3%。第 4.4 节的扫描实测了这个数字。
+
+### 4.3 RTL 讲解
+
+四个文件：`uart_baud.v`（每 DIV 个 clk 一个 tick）、`uart_tx.v`、`uart_rx.v`、`tb_uart.v`。参数 `PARITY`（0 无、1 奇、2 偶）和 `STOP`（1 / 2）。
+
+**发送器**（`lab/UART/uart_tx.v`）：把整帧预先拼进移位寄存器，每 16 个 tick 移出一位。
+
+```verilog
+// 奇校验：数据 + 校验位中 1 的个数为奇数；偶校验：为偶数
+wire        par   = (PARITY == 1) ? ~^data : ^data;
+// 起始位之后按 LSB 先出的顺序排好；高位补 1 就是停止位
+wire [10:0] frame = (PARITY == 0) ? {3'b111, data} : {2'b11, par, data};
+
+end else if (tick) begin
+    if (ovs == 4'd15) begin
+        ovs <= 4'd0;
+        if (bitn == NBITS - 1) begin
+            active <= 1'b0;
+            txd    <= 1'b1;
+        end else begin
+            txd  <= sh[0];
+            sh   <= {1'b1, sh[10:1]};       // 右移，LSB 先出，高位补停止位
+            bitn <= bitn + 1'b1;
+        end
+    end else begin
+        ovs <= ovs + 1'b1;
+    end
+end
+```
+
+输入口是 valid/ready：`ready = ~active`，握手当拍 `txd` 拉低开始起始位。`txd` 是寄存器输出，不会有组合毛刺，这对异步线路很重要（毛刺会被对方当成起始位）。
+
+**接收器**（`lab/UART/uart_rx.v`）的四个要点：
+
+```verilog
+// 1）rxd 是异步输入，两级同步；复位值为 1（空闲电平），否则复位释放瞬间就"看到"起始位
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin rx_m <= 1'b1; rx_s <= 1'b1; end
+    else        begin rx_m <= rxd;  rx_s <= rx_m; end
+end
+
+// 2）第 7、8 个 tick 采样存起来，第 9 个 tick 与当前值三取二
+wire maj = (smp[1] & smp[0]) | (smp[1] & rx_s) | (smp[0] & rx_s);
+
+if (tick) begin
+    if (!busy) begin
+        if (!rx_s) begin busy <= 1'b1; ovs <= 4'd1; bitn <= 4'd0; end   // 起始沿，精度 1 tick
+    end else begin
+        if (ovs == 4'd7 || ovs == 4'd8) smp <= {smp[0], rx_s};
+        if (ovs == 4'd9) begin
+            if (bitn == 4'd0) begin
+                if (maj) busy <= 1'b0;                  // 3）起始位中心为 1：假起始
+            end else if (bitn <= 4'd8) begin
+                sh <= {maj, sh[7:1]};                   // LSB 先到，右移
+            end else if (bitn != LASTBIT) begin
+                par_bit <= maj;
+            end else begin                              // 4）停止位：判决完立即回空闲
+                busy <= 1'b0; valid <= 1'b1; data <= sh;
+                frame_err <= ~maj; parity_err <= ~par_ok;
+            end
+        end
+        ...                                             // ovs 0..15 循环，满 16 进下一位
+```
+
+- `LASTBIT = 9 + (有校验 ? 1 : 0)`，只检查第一个停止位。多出来的停止位对接收方来说就是空闲，所以接收器不需要 `STOP` 参数。
+- 判决在第 9 个 tick 完成，此时离停止位结束还有 7 个 tick，下一帧的起始沿即使提前到来也能被检测到。
+- 同步器带来 2 个 clk 的固定延迟，对所有位一样，不影响判决位置。
+
+常见错误：
+
+| 错误 | 后果 |
+|------|------|
+| rxd 不同步直接用 | 亚稳态；同一拍不同触发器看到不同的值，状态机跑飞 |
+| 同步器复位为 0 | 复位释放时误检测到起始位，收到一个垃圾字节 |
+| 在位的开头而不是中心判决 | 波特率容限只剩一侧，发送方稍慢就错位（变异 M2：+2% 就开始丢帧） |
+| 每位只采一次 | 一个毛刺就翻转一位（变异 M1：200 个带毛刺的帧只对了 5 个） |
+| 起始位不在中心再确认 | 线上一个窄脉冲就被当成一帧 |
+| 等停止位完全结束才回空闲 | 发送方稍快时下一帧的起始沿落在"忙"的时间里，被错过 |
+| MSB 先发 | 与所有标准 UART 不兼容 |
+| TX 输出是组合逻辑 | 输出毛刺在对方看来就是起始位 |
+
+### 4.4 仿真
+
+```bash
+cd 12_Bus_Interfaces/lab/UART && bash run_sim.sh     # 8N1、8E1、8O2 各跑一次
+bash mutation.sh                                    # 2 个变异，应全部 FAIL
+```
+
+`tb_uart.v`：clk 100 MHz、`DIV = 4`，每位 64 个 clk（640 ns）。检查分两路：
+
+- **TX 线检查器**：不看 RTL 内部，看到 `txd` 下降沿后在理想位中心采样，核对起始 / 数据 / 校验 / 停止位。
+- **RX 输出检查器**：按期望队列比对 `{frame_err, parity_err, data}`。
+
+激励分四个阶段：
+
+- **P1 环回**：`uart_tx` 直连 `uart_rx`，背靠背 300 字节。
+- **P2 波特率扫描**：改由 testbench 的发送模型按 `(1+δ)` 倍位宽发送，δ 从 −6% 到 +6%，每档 200 帧，帧间空闲 1.5 位。只统计，不判错；但要求 |δ| ≤ 3% 时全对。
+- **P3 噪声**：每个数据位中心附近随机位置加一个 30 ns 的反相毛刺（比 1 个 tick 的 40 ns 还短）；另外发 100 个 1–5 个 tick 宽的低脉冲，模拟假起始。
+- **P4 错误注入**：停止位发 0，期望 `frame_err`；校验位取反，期望 `parity_err`。
+
+```
+===== tb_uart：PARITY=0 STOP=1 =====
+--------------------------------------------------------------
+config 8N1 | P1 loopback: TX frames checked=300  RX ok=300
+P2 baud offset sweep (200 frames each, 1.5-bit idle gap):
+   offset  -6.0% : ok  64  bad 136  lost   0  extra  0
+   offset  -5.0% : ok 200  bad   0  lost   0  extra  0
+   offset  -4.5% : ok 200  bad   0  lost   0  extra  0
+   offset  -4.0% : ok 200  bad   0  lost   0  extra  0
+   offset  -3.0% : ok 200  bad   0  lost   0  extra  0
+   offset  -2.0% : ok 200  bad   0  lost   0  extra  0
+   offset   0.0% : ok 200  bad   0  lost   0  extra  0
+   offset   2.0% : ok 200  bad   0  lost   0  extra  0
+   offset   3.0% : ok 200  bad   0  lost   0  extra  0
+   offset   4.0% : ok 200  bad   0  lost   0  extra  0
+   offset   4.5% : ok 200  bad   0  lost   0  extra  0
+   offset   5.0% : ok 200  bad   0  lost   0  extra  0
+   offset   6.0% : ok 148  bad  52  lost   0  extra  0
+P3 noise: glitched frames ok=200/200  false-start pulses -> frames=0/100
+P4 error inject: flagged correctly=50/50
+--------------------------------------------------------------
+PASS
+===== tb_uart：PARITY=2 STOP=1 =====
+--------------------------------------------------------------
+config 8E1 | P1 loopback: TX frames checked=300  RX ok=300
+P2 baud offset sweep (200 frames each, 1.5-bit idle gap):
+   offset  -6.0% : ok  29  bad 171  lost   0  extra  0
+   offset  -5.0% : ok  89  bad 111  lost   0  extra  0
+   offset  -4.5% : ok 180  bad  20  lost   0  extra  0
+   offset  -4.0% : ok 200  bad   0  lost   0  extra  0
+   ...（-3% ~ +4.5% 全部 ok 200）
+   offset   5.0% : ok 200  bad   0  lost   0  extra  0
+   offset   6.0% : ok  58  bad 142  lost   0  extra  0
+P3 noise: glitched frames ok=200/200  false-start pulses -> frames=0/100
+P4 error inject: flagged correctly=100/100
+--------------------------------------------------------------
+PASS
+===== tb_uart：PARITY=1 STOP=2 =====
+--------------------------------------------------------------
+config 8O2 | P1 loopback: TX frames checked=300  RX ok=300
+P2 baud offset sweep (200 frames each, 1.5-bit idle gap):
+   offset  -6.0% : ok  36  bad 164  lost   0  extra  0
+   offset  -5.0% : ok  97  bad 103  lost   0  extra  0
+   offset  -4.5% : ok 180  bad  20  lost   0  extra  0
+   offset  -4.0% : ok 200  bad   0  lost   0  extra  0
+   ...（-3% ~ +4.5% 全部 ok 200）
+   offset   5.0% : ok 200  bad   0  lost   0  extra  0
+   offset   6.0% : ok  80  bad 120  lost   0  extra  0
+P3 noise: glitched frames ok=200/200  false-start pulses -> frames=0/100
+P4 error inject: flagged correctly=100/100
+--------------------------------------------------------------
+PASS
+```
+
+（8E1、8O2 中间几档输出与 8N1 相同，省略号是这里为了篇幅省掉的，原始输出每档都有一行。）
+
+**容限实测**：8N1 在 −5% ~ +5% 全对，带校验位时收窄到 −4% ~ +5%。δ > 0 表示发送方位宽更长（发送方慢），δ < 0 表示发送方快。两侧不对称，可以用第 4.2 节的公式解释：
+
+- **发送方慢（δ > 0）**：判决点相对真实位置往前漂，最后一个判决的位最先出问题。8N1 是停止位（n = 9），界限约为 `(0.5 + 检测延迟) / 9`。检测延迟是 0–1 个 tick 加上同步器的 2 个 clk，大约 0.03–0.09 位，所以界限约 5.9%–6.6%：+5% 全对，+6% 部分出错。带校验时停止位变成 n = 10，所以 +6% 出错更多（8E1 错 142 帧，8N1 只错 52 帧）。
+- **发送方快（δ < 0）**：判决点往后漂。停止位后面是空闲（也是 1），判晚了也不会错，所以真正卡住的是**最后一个可能为 0 的位**：8N1 是 D7（n = 8），界限 `(0.5 − 检测延迟) / 9 ≈ 4.6%–5.2%`，实测 −5% 全对、−6% 出错；带校验时是校验位（n = 9），界限约 4.1%–4.7%，实测 −4.5% 开始出错。
+- **结论**：16 倍过采样、中心判决的 UART，收发合计误差大约在 ±4% 以内是安全的。每一端各分一半，就是常说的"每端 ≤ 2%"。
+
+P3 中 200 个带毛刺的帧全对，100 个假起始脉冲一个都没被当成帧：毛刺短于 1 个 tick，最多污染三次采样中的一次；1–5 个 tick 宽的低脉冲在起始位中心（第 7–9 个 tick）已经回到 1，表决为 1，判为假起始。
+
+变异测试：
+
+```
+===== M1: 单点采样 =====
+P2 baud offset sweep (200 frames each, 1.5-bit idle gap):
+   offset  -6.0% : ok  64  bad 136  lost   0  extra  0
+   offset  -5.0% : ok 200  bad   0  lost   0  extra  0
+   ...（与原设计完全相同）
+   offset   6.0% : ok 148  bad  52  lost   0  extra  0
+ERROR @21098395000: RX frame mismatch
+ERROR @21105435000: RX frame mismatch
+P3 noise: glitched frames ok=5/200  false-start pulses -> frames=0/100
+P4 error inject: flagged correctly=50/50
+FAIL (196 errors)
+===== M2: 在位开头采样 =====
+P2 baud offset sweep (200 frames each, 1.5-bit idle gap):
+   offset  -6.0% : ok 200  bad   0  lost   0  extra  0
+   ...（-5% ~ -2% 全部 ok 200）
+   offset   0.0% : ok 200  bad   0  lost   0  extra  0
+   offset   2.0% : ok  92  bad 108  lost   0  extra  0
+ERROR @13431425000: frames lost within +-3%
+   offset   3.0% : ok  12  bad 188  lost   0  extra  0
+ERROR @14944385000: frames lost within +-3%
+   offset   4.0% : ok   3  bad 197  lost   0  extra  0
+   offset   4.5% : ok   1  bad 199  lost   0  extra 24
+   offset   5.0% : ok   2  bad 198  lost   0  extra 36
+   offset   6.0% : ok   1  bad 199  lost   0  extra 32
+P3 noise: glitched frames ok=200/200  false-start pulses -> frames=19/100
+P4 error inject: flagged correctly=10/50
+FAIL (75 errors)
+```
+
+- **M1**（去掉三取二，只用第 8 个 tick 的一次采样）：判决位置几乎没变，所以波特率扫描和原设计**逐行相同**，只有噪声阶段抓到了它（200 个带毛刺的帧只对 5 个）。每一种设计特性都需要针对它的激励，否则"多数表决"写没写对根本测不出来。
+- **M2**（在第 1–3 个 tick 判决）：判决点贴着位的开头，发送方稍慢就落到前一位里，+2% 就错了一半；发送方快的一侧反而余量很大（−6% 全对）。较宽的假起始脉冲有一部分在"起始位确认"时还没结束，被当成了帧（19/100）。P4 的停止位错误只对了 10/50：接收器在停止位的第 3 个 tick 就回到空闲，停止位剩下的 13 个 tick 还是 0，于是被当成新的起始位，确认后多收了一个垃圾帧，打乱了后面的比对。原设计在第 9 个 tick 回空闲，也会把剩下的低电平当起始，但 7 个 tick 后在"起始位中心"再确认时线已经回到 1，被判为假起始。
+
+波形（`uart.vcd`，最后一次运行 8O2，只录 P1）：看 `txd`、`u_rx.rx_s`、`u_rx.ovs`、`u_rx.bitn`、`rx_valid`。`ovs` 每位从 0 数到 15，`bitn` 在停止位（8O2 下是 10）第 9 个 tick 时 `rx_valid` 拉高一拍。
+
+### 4.5 变体与扩展
+
+- **收发 FIFO**：真实 UART 控制器（如 16550 兼容 IP）在 TX / RX 各放一个 FIFO，CPU 通过 APB 寄存器批量读写，并提供"FIFO 半满"中断和接收超时中断（FIFO 非空但一段时间没新数据）。
+- **硬件流控 RTS/CTS**：接收方 FIFO 快满时拉高 RTS（请求对方暂停），发送方看到 CTS 无效就停在帧边界。
+- **自动波特率检测**：约定对方先发一个已知字符（如 0x55 或 0x80），测起始位或若干位的宽度，反推出分频值。
+- **小数分频**：用相位累加器产生 tick，平均频率精确，但 tick 间隔有 ±1 个 clk 的抖动，对 16 倍过采样影响很小。
+- **更低的过采样倍数**：8 倍甚至 4 倍可以提高最高波特率，代价是检测不确定度变大（1/8 位），容限变小。
+- **物理层**：UART 只定义帧格式；RS-232 是 ±电压、RS-485 是差分多点总线（半双工，要控制发送使能）；LIN 总线是 UART 帧加上 break 和同步场；9 位模式用第 9 位区分"地址字节 / 数据字节"，做多机通信。
+
+### 4.6 面试要点与常见追问
+
+- **帧**：空闲高，起始位 0，数据 LSB 先，可选校验，停止位 1；8N1 = 8 数据位、无校验、1 停止位，一帧 10 位。
+- **每帧重新同步**：只靠起始位下降沿对齐，误差不跨帧累积；停止位保证下一帧有下降沿。
+- **过采样**：16 倍 tick，检测到 0 后在第 7/8/9 个 tick 三取二；起始位中心再确认滤假起始；rxd 先两级同步、复位为 1。
+- **容限**：`≈ 0.5 / (位数)`，8N1 收发合计约 ±4%–5%，每端 ≤ 2%；本章实测 8N1 为 −5% ~ +5%。
+- **错误**：停止位为 0 → 帧错误；校验不符 → 校验错误；FIFO 满了还来数据 → 溢出错误（overrun）。
+- **追问：为什么是 16 倍**——检测不确定度 1/16 位，足够小；再高收益不大，时钟要求却更高。
+- **追问：波特率怎么选分频**——`DIV = f_clk / (16 × baud)` 四舍五入，算出误差；误差 > 1% 时换时钟或用小数分频。
+
+**一句话**：UART 不传时钟，每帧用起始位下降沿对齐，接收方 16 倍过采样、在位中心三取二判决；收发波特率合计容差约 ±4%，所以每端要做到 2% 以内。
+
+---
 
 ## 5. SPI
 
-待写：四种模式（CPOL/CPHA）、主从实现。
+### 5.1 解决什么问题，面试怎么考
+
+UART 不传时钟，所以速度受限于双方时钟精度，一般只到几 Mbps。**SPI（Serial Peripheral Interface）** 由主机**直接送出时钟 SCLK**，数据在 SCLK 的一个沿发出、另一个沿采样，没有波特率误差的问题，速度可以到几十 MHz。它是 Flash、ADC / DAC、显示屏、传感器最常用的接口。
+
+四根线：`SCLK`（主机输出时钟）、`MOSI`（主出从入）、`MISO`（主入从出）、`CS_n`（片选，低有效，每个从机一根）。**全双工**：每个 SCLK 周期主机发出一位、同时收回一位，本质上是主从两个移位寄存器首尾相接组成的环。
+
+面试考法：
+
+1. CPOL / CPHA 四种模式分别在哪个沿采样、哪个沿变化；画出模式 0 和模式 3 的时序。
+2. CPHA = 0 时第一位什么时候必须放好。
+3. 手写 SPI 主机 / 从机；从机用系统时钟过采样，还是直接用 SCLK 当时钟。
+4. 多从机怎么接（独立片选 / 菊花链）；MISO 为什么要三态。
+5. 主从模式不一致会怎样；SCLK 最高能跑多快。
+
+### 5.2 原理
+
+**CPOL / CPHA**：
+
+- **CPOL**：SCLK 空闲电平。0 = 空闲低，1 = 空闲高。
+- **CPHA**：在哪个沿采样。0 = **前沿**（SCLK 离开空闲电平的沿）采样、后沿换数据；1 = 前沿换数据、**后沿**采样。
+
+| 模式 | CPOL | CPHA | 空闲 SCLK | 采样沿 | 换数据沿 |
+|------|------|------|-----------|--------|----------|
+| 0 | 0 | 0 | 低 | 上升 | 下降 |
+| 1 | 0 | 1 | 低 | 下降 | 上升 |
+| 2 | 1 | 0 | 高 | 下降 | 上升 |
+| 3 | 1 | 1 | 高 | 上升 | 下降 |
+
+一个字节有 8 个 SCLK 周期，也就是 16 个沿（MSB 先，B7 … B0）：
+
+| | 前沿 1 | 后沿 1 | 前沿 2 | 后沿 2 | … | 前沿 8 | 后沿 8 |
+|--|--------|--------|--------|--------|---|--------|--------|
+| CPHA=0 | 采 B7 | 换 B6 | 采 B6 | 换 B5 | … | 采 B0 | 不再换 |
+| CPHA=1 | 放 B7 | 采 B7 | 换 B6 | 采 B6 | … | 换 B0 | 采 B0 |
+
+- **CPHA=0 的第一位必须在 CS 拉低时就放好**：第一个前沿就要采样，之前没有"换数据沿"。所以 CPHA=0 的从机必须在 CS 下降沿就把 B7 驱动到 MISO 上。
+- CPHA=1 在第一个前沿才放出 B7，最后一个后沿采完 B0。
+- 画时序时记一条：**采样沿和换数据沿永远是相反的两个沿**，这样数据在采样沿前后各有半个 SCLK 周期的建立 / 保持余量。
+
+```
+模式 0（CPOL=0 CPHA=0）
+CS_n   ‾‾‾\_______________________________________________/‾‾‾
+SCLK   ________/‾‾‾\___/‾‾‾\___/‾‾‾\___ ... ___/‾‾‾\__________
+MOSI   ----< B7    >< B6   >< B5   >< B4 ...  >< B0    >------
+               ^采      ^采     ^采               ^采
+```
+
+模式 3 的采样沿同样是上升沿，只是 SCLK 空闲为高。所以**很多器件同时支持模式 0 和模式 3**（如大多数 SPI Flash），它们对从机来说采样沿相同。第 5.4 节的模式不匹配矩阵验证了这一点。
+
+**多从机**：
+
+- **独立片选**：MOSI / SCLK / MISO 并联，每个从机一根 CS。未选中的从机 MISO 必须高阻，否则多个从机同时驱动 MISO 会冲突，所以本章从机有 `miso_oe`。
+- **菊花链**：从机的 MISO 接下一个从机的 MOSI，共用一根 CS，数据像移位寄存器一样穿过所有从机（如 LED 驱动链）。
+
+**SCLK 能跑多快**：主机在一个沿换数据，从机在对沿采样。数据要经过"主机输出延迟 + 板级走线 + 从机建立时间"，读回方向还要加"从机时钟到输出延迟 + 回程走线"。读方向是一个完整的往返，通常是 SPI 提速的瓶颈，高速 Flash 控制器会引入"延迟采样"（在更晚的沿或内部延迟线采 MISO）来补偿。
+
+**从机的两种实现**：
+
+1. **过采样**（本章）：从机运行在自己的系统时钟上，把 SCLK / CS_n / MOSI 当成异步信号，先同步、再检测边沿。好处是全部逻辑在一个时钟域，易于和系统其它部分对接；代价是系统时钟必须比 SCLK 快很多倍（第 5.4 节实测 SCLK 半周期 ≥ 4 个 clk，也就是系统时钟 ≥ 8 倍 SCLK）。
+2. **直接用 SCLK 当时钟**：移位寄存器用 SCLK 的沿打，能跑到接近 SCLK 物理上限；但收到的字节要跨时钟域送到系统域（握手或异步 FIFO，`../06_CDC/README.md`），而且 CS 无效时 SCLK 不翻转，从机不能靠 SCLK 做"收完后的收尾"动作。高速 SPI 从机通常这么做。
+
+### 5.3 RTL 讲解
+
+**主机**（`lab/SPI/spi_master.v`）：`cpol`、`cpha`、`div`（SCLK 半周期 = div 个 clk）都是运行时输入。状态 IDLE → SETUP（CS 拉低后等半周期）→ XFER（16 个 SCLK 沿）→ HOLD（等半周期再拉高 CS）→ 至少空闲半周期。
+
+```verilog
+assign mosi = sh_tx[7];                     // MSB 先出
+
+wire half    = (cnt == 8'd0);               // 半周期到
+wire leading = ~nedge[0];                   // 偶数号沿是前沿
+wire samp_e  = cpha ? ~leading :  leading;
+wire shift_e = cpha ?  leading : ~leading;
+
+IDLE: ... else if (start) begin
+    cs_n  <= 1'b0;
+    sh_tx <= tx;                            // MSB 立即出现在 MOSI 上（CPHA=0 需要）
+    ...
+end
+XFER: if (half) begin
+    sclk  <= ~sclk;
+    nedge <= nedge + 1'b1;
+    if (samp_e) begin
+        sh_rx <= {sh_rx[6:0], miso};
+        nsamp <= nsamp + 1'b1;
+    end
+    // 移位沿：CPHA=0 时第 8 次采样后的后沿不再移位；CPHA=1 时第一个前沿不移位
+    if (shift_e && nsamp != 4'd0 && nsamp != 4'd8)
+        sh_tx <= {sh_tx[6:0], 1'b0};
+    if (nedge == 5'd15) st <= HOLD;
+end
+```
+
+移位规则 `nsamp != 0 && nsamp != 8` 同时覆盖了两种相位：
+
+- **CPHA=0**：前沿采样、后沿移位。每次移位前都已经采过样，所以 `nsamp != 0` 总成立；第 8 个后沿时 `nsamp == 8`，不再移位。
+- **CPHA=1**：前沿移位、后沿采样。第一个前沿时 `nsamp == 0`，不移位，因为 B7 在 CS 拉低时已经放好了，这个前沿"放 B7"的动作已经提前完成；之后每个前沿都移位。
+
+**从机**（`lab/SPI/spi_slave.v`）：三个输入先同步，再用打一拍做边沿检测。
+
+```verilog
+always @(posedge clk ...) begin
+    sclk_r <= {sclk_r[1:0], sclk};
+    cs_r   <= {cs_r[1:0], cs_n};
+    mosi_r <= {mosi_r[0], mosi};            // 与 sclk_r[1] 对齐：同样两级延迟
+end
+wire rise     =  sclk_r[1] & ~sclk_r[2];
+wire fall     = ~sclk_r[1] &  sclk_r[2];
+wire leading  = cpol ? fall : rise;
+wire trailing = cpol ? rise : fall;
+wire samp_e   = cpha ? trailing : leading;
+wire shift_e  = cpha ? leading  : trailing;
+
+assign miso    = sh_tx[7];
+assign miso_oe = cs_act;                    // 片选有效才驱动 MISO
+
+if (cs_fall) begin
+    sh_tx <= tx_data;                       // CS 下降时装载，B7 立即出现在 MISO
+    nsamp <= 4'd0;
+end else if (cs_act) begin
+    if (samp_e) begin
+        sh_rx <= {sh_rx[5:0], mosi_r[1]};
+        nsamp <= nsamp + 1'b1;
+        if (nsamp == 4'd7) begin rx_data <= {sh_rx, mosi_r[1]}; rx_valid <= 1'b1; end
+    end
+    if (shift_e && nsamp != 4'd0 && nsamp != 4'd8)
+        sh_tx <= {sh_tx[6:0], 1'b0};
+end
+```
+
+- `mosi_r` 和 `sclk_r[1]` 都经过两级同步，延迟相同，所以 MOSI 相对 SCLK 的建立 / 保持关系在同步后保持不变：在检测到采样沿的那一拍，`mosi_r[1]` 正是 SCLK 沿那一刻的 MOSI。
+- MISO 路径的延迟约 3 个 clk：SCLK 换数据沿 → 2 级同步 → 边沿检测 → `sh_tx` 移位 → MISO 变化。MISO 必须在主机的下一个采样沿（半个 SCLK 周期后）之前稳定，这就是系统时钟要比 SCLK 快很多倍的原因。
+- 从机移位规则和主机相同。
+
+常见错误：
+
+| 错误 | 后果 |
+|------|------|
+| CPHA=0 时从机等第一个 SCLK 沿才放 B7 | 主机第一个前沿采到的是上一次残留的值，整字节错一位 |
+| CPHA=1 时第一个前沿也移位 | B7 还没被采就被移走（变异 M1：模式 1、3 的 MISO 几乎全错） |
+| 采样沿 / 换数据沿弄反 | 在数据变化的同一个沿采样，结果取决于延迟竞争（变异 M2） |
+| MISO 不做三态 | 多从机共用 MISO 时互相冲突 |
+| 过采样从机的系统时钟不够快 | MISO 来不及在主机采样沿前更新（第 5.4 节：div < 4 时读回全错） |
+| MOSI 和 SCLK 同步级数不同 | 同步后建立 / 保持关系被破坏，采到相邻位 |
+| CS 无效期间 SCLK 从空闲电平跳变 | 从机看到多余的沿；应先切好 CPOL 再拉低 CS |
+| 以为模式不匹配"仿真通过就能用" | 见第 5.4 节，某些组合在仿真里侥幸通过，真实器件上是保持时间竞争 |
+
+### 5.4 仿真
+
+```bash
+cd 12_Bus_Interfaces/lab/SPI && bash run_sim.sh
+bash mutation.sh
+```
+
+`tb_spi.v`：`spi_master` 直连 `spi_slave`，每笔传输双向比对（主机收到的 = 从机发的，从机收到的 = 主机发的）。另有**引脚级监视器**，独立于 RTL，只按模式定义解码：
+
+- CS 下降时 SCLK 必须在 CPOL 电平；CS 无效时 SCLK 不许翻转。
+- 在模式规定的采样沿直接采 MOSI / MISO 引脚，每个 CS 期间正好 8 个采样沿，解码值与期望一致。
+
+激励分三个阶段：
+
+- **P1**：4 种模式各 250 字节，div 随机取 4–8，监视器开启。
+- **P2**：主从模式不匹配矩阵，16 种组合各 50 字节。
+- **P3**：div 从 1 扫到 6。
+
+```
+===== tb_spi =====
+---------------------------------------------------------------
+P1 mode 0 (CPOL=0 CPHA=0): M->S ok 250/250  S->M ok 250/250
+P1 mode 1 (CPOL=0 CPHA=1): M->S ok 250/250  S->M ok 250/250
+P1 mode 2 (CPOL=1 CPHA=0): M->S ok 250/250  S->M ok 250/250
+P1 mode 3 (CPOL=1 CPHA=1): M->S ok 250/250  S->M ok 250/250
+P1 pin monitor decoded 1000 frames
+P2 mode mismatch (50 bytes, 'M->S/S->M' correct):
+            slave m0   slave m1   slave m2   slave m3
+master m0    50/50      0/ 0      0/ 1     50/50  
+master m1    50/50     50/50     50/50     50/50  
+master m2     1/ 0     50/50     50/50      0/ 1  
+master m3    50/50     50/50     50/50     50/50  
+P3 div sweep (SCLK half period = div clk; 'M->S/S->M' correct of 50):
+       mode0     mode1     mode2     mode3
+div=1  50/ 0     50/ 0     50/ 0     50/ 0    
+div=2  50/ 0     50/ 0     50/ 0     50/ 0    
+div=3  50/ 0     50/ 0     50/ 1     50/ 0    
+div=4  50/50     50/50     50/50     50/50    
+div=5  50/50     50/50     50/50     50/50    
+div=6  50/50     50/50     50/50     50/50    
+---------------------------------------------------------------
+PASS
+```
+
+**P2 模式矩阵**怎么读：
+
+- **主机 m0 / m2 两行才是真实结论**：模式 0 只和模式 3 兼容，模式 2 只和模式 1 兼容，正好是"采样沿相同"的组合（0、3 在上升沿采样，1、2 在下降沿采样）。其它格子几乎全错，偶尔的 1/50 是随机数据碰巧对上。
+- **主机 m1 / m3 两行全部"通过"，这是仿真假象**。主机 CPHA=1 在后沿采样，而过采样从机的 MISO 要比 SCLK 沿晚约 3 个 clk 才更新。主机采样时，从机还没来得及响应这个沿，采到的总是"上一个沿之前放好的那一位"，不管从机按哪种模式移位，结果都凑巧对齐。反方向上，本仿真里主机的 SCLK 和 MOSI 在同一个 clk 沿变化，从机又经过相同的同步延迟看到它们，等于保持时间为零时刚好采到了新值。真实芯片上这是零保持余量的竞争，**模式不匹配就是不能用**，不能因为仿真矩阵里某格通过就依赖它。
+- 所以 testbench 只要求对角线全对，其它格子只统计不判错。
+
+**P3 分频扫描**：主机到从机方向在任何 div 下都对，因为从机对 SCLK 和 MOSI 做了相同的同步，相对关系不变。从机到主机方向要 div ≥ 4 才对：MISO 路径约 3 个 clk，必须在半个 SCLK 周期内完成，所以 **div ≥ 4，也就是系统时钟 ≥ 8 倍 SCLK**。这是过采样从机的硬约束，写从机规格时要注明"SCLK ≤ f_clk / 8"。
+
+变异测试：
+
+```
+===== M1: 从机 CPHA=1 第一个前沿也移位 =====
+P1 mode 0 (CPOL=0 CPHA=0): M->S ok 250/250  S->M ok 250/250
+ERROR @295615000: MISO pin decode mismatch
+ERROR @296415000: MISO pin decode mismatch
+P1 mode 1 (CPOL=0 CPHA=1): M->S ok 250/250  S->M ok 1/250
+P1 mode 2 (CPOL=1 CPHA=0): M->S ok 250/250  S->M ok 250/250
+P1 mode 3 (CPOL=1 CPHA=1): M->S ok 250/250  S->M ok 0/250
+FAIL (509 errors)
+===== M2: 主机采样沿/移位沿对调 =====
+ERROR @1015000: MOSI pin decode mismatch
+ERROR @2525000: MOSI pin decode mismatch
+P1 mode 0 (CPOL=0 CPHA=0): M->S ok 0/250  S->M ok 250/250
+P1 mode 1 (CPOL=0 CPHA=1): M->S ok 250/250  S->M ok 2/250
+P1 mode 2 (CPOL=1 CPHA=0): M->S ok 1/250  S->M ok 250/250
+P1 mode 3 (CPOL=1 CPHA=1): M->S ok 250/250  S->M ok 1/250
+FAIL (519 errors)
+```
+
+- **M1** 只影响 CPHA=1 的两种模式，而且只影响从机发送方向：B7 在被采样之前就被移走了。如果 testbench 只测模式 0（很常见），这个 bug 完全看不出来。**四种模式都要测。**
+- **M2** 在每种模式下都坏掉一个方向：CPHA=0 时主机换数据的时刻错了，引脚监视器直接报 MOSI 解码错误；CPHA=1 时主机在错误的沿采 MISO。引脚级监视器的价值在于：它不依赖从机 RTL，就算主从两端犯了同样的错误，"主从互通"也照样能看出协议不对。
+
+波形（`spi.vcd`，只录 P1）：看 `cs_n`、`sclk`、`mosi`、`miso`、`u_s.sclk_r`、`u_s.sh_tx`。能看到 `miso` 比 `sclk` 沿晚 3 个 clk 变化。
+
+### 5.5 变体与扩展
+
+- **用 SCLK 做时钟的从机**：见第 5.2 节，速度最高，接收字节需要跨时钟域。CPHA=0 的 B7 要在 CS 下降时就放好，这时还没有 SCLK 沿，通常用 CS 的异步置位 / 预装载，或者在上一次传输结束时预先装好。
+- **可变长度 / 连续传输**：CS 保持低连续传多个字节（Flash 的"命令 + 地址 + 数据"），从机按字节计数解析命令。
+- **Dual / Quad SPI（QSPI）**：命令阶段单线，地址和数据阶段 2 / 4 根线双向传，带 dummy 周期给 Flash 准备数据时间。XIP（execute in place）让 CPU 直接从 QSPI Flash 取指令。
+- **三线 SPI**：MOSI / MISO 合成一根双向线，半双工。
+- **主机侧 FIFO + DMA**：真实 SPI 控制器用 FIFO 缓冲，配合 DMA 连续传大块数据。
+- **MISO 延迟采样**：高速时读回路径是往返延迟，控制器可以配置在更晚的沿采样。
+
+### 5.6 面试要点与常见追问
+
+- **四根线**：SCLK、MOSI、MISO、CS_n；主机出时钟，全双工，两个移位寄存器首尾成环。
+- **CPOL** = 空闲电平；**CPHA** = 0 前沿采样、1 后沿采样；采样沿和换数据沿永远相反。
+- **模式 0 / 3 采样沿都是上升沿**，所以很多器件同时支持；模式 1 / 2 同为下降沿。
+- **CPHA=0 的第一位在 CS 下降时就要放好**；CPHA=1 第一个前沿才放。
+- **多从机**：独立 CS，未选中的从机 MISO 高阻；或菊花链。
+- **过采样从机**：同步 + 边沿检测，MOSI 和 SCLK 同步级数必须相同；MISO 延迟约 3 clk，系统时钟 ≥ 8 倍 SCLK（本章实测）。
+- **追问：SPI 和 I2C 比**——SPI 快（几十 MHz）、全双工、推挽、协议简单，但线多（每个从机一根 CS）、无应答、无寻址；I2C 两根线、有地址和应答，但慢、半双工。
+- **追问：SPI 最高频率受什么限制**——读回方向的往返延迟（从机时钟到输出 + 两段走线 + 主机建立时间），要在半个 SCLK 周期内完成。
+
+**一句话**：SPI 由主机送出时钟，CPOL 定空闲电平、CPHA 定前沿还是后沿采样，采样和换数据永远在相反的沿；CPHA=0 第一位要在 CS 下降时放好，过采样从机要求系统时钟远快于 SCLK。
+
+---
 
 ## 6. I2C
 
-待写：起止条件、应答、开漏、仲裁。
+### 6.1 解决什么问题，面试怎么考
+
+SPI 每加一个从机就要多一根片选线。**I2C（Inter-Integrated Circuit）** 只用两根线：`SCL`（时钟）和 `SDA`（数据），所有器件挂在同一对线上，靠**地址**区分从机，每个字节后有**应答**。它用来接 EEPROM、传感器、PMIC、摄像头配置口、HDMI DDC 等大量低速器件。标准模式 100 kHz、快速模式 400 kHz、快速模式+ 1 MHz。
+
+面试考法：
+
+1. **为什么是开漏**（open-drain）+ 上拉电阻；线与是什么意思。
+2. START / STOP / 重复起始的定义；为什么 SDA 只能在 SCL 低时变化。
+3. 一次"写寄存器"和"读寄存器"的完整时序（地址、R/W、ACK、重复起始、最后一个字节 NACK）。
+4. **时钟拉伸**是什么，主机怎么支持。
+5. **多主机仲裁**怎么做，为什么不会破坏胜者的数据。
+6. 总线挂死（SDA 被从机一直拉低）怎么恢复。
+
+### 6.2 原理
+
+**开漏与线与**：每个器件对 SCL / SDA 只能"拉低"或"放开"，不能主动驱动高电平；线上的高电平由上拉电阻提供。所以任何一个器件拉低，线就是低，这叫**线与**（wired-AND）。这一个电气特性支撑了 I2C 的三项功能：
+
+- **应答**：主机放开 SDA，从机拉低表示 ACK。
+- **时钟拉伸**：从机没准备好时把 SCL 拉住不放。
+- **多主机仲裁**：谁发 0 谁赢，发 1 的一方能检测到"我放开了线却是低的"。
+
+如果用推挽输出，两个器件一个输出 1、一个输出 0 就是电源短路，上面三项都做不了。上拉电阻的阻值取决于总线电容和速率：阻值太大，上升沿太慢；阻值太小，拉低时电流太大。
+
+**数据有效性与起止条件**：
+
+- **SDA 只能在 SCL 为低时变化**，SCL 为高时 SDA 必须稳定，接收方在 SCL 高电平期间（上升沿）采样。
+- 唯一的例外就是起止条件：**START = SCL 高时 SDA 下降**，**STOP = SCL 高时 SDA 上升**。它们一定不会和数据位混淆，所以任何从机在任何时刻看到 START 都能重新同步。
+- **重复起始（Sr）**：不发 STOP 直接再发一个 START，主机不释放总线就切换读写方向或换从机。
+
+**一次传输**：
+
+```
+写寄存器： S | 地址(7) W | A | 寄存器指针 | A | 数据0 | A | 数据1 | A | ... | P
+读寄存器： S | 地址(7) W | A | 寄存器指针 | A | Sr | 地址(7) R | A | 数据0 | A | ... | 数据n | NA | P
+           ── 主机发 ──       ─ 从机回 ─                            ─ 从机发 ─  ─ 主机回 ─
+```
+
+- 地址字节 = 7 位地址 + R/W 位（0 写、1 读）。数据手册里的"地址 0x50"和"写地址 0xA0 / 读地址 0xA1"是同一个器件，面试和调试时常混淆。
+- **每个字节 9 个时钟**：8 位数据（MSB 先）+ 1 位应答。应答位由**接收方**拉低 SDA 表示 ACK，不拉低（线为高）是 NACK。
+- 写时主机是发送方，从机回 ACK；读时从机是发送方，**主机回 ACK 表示"还要"，读最后一个字节回 NACK**，从机才会放开 SDA，主机才能发 STOP。
+- 地址没有从机应答（NACK）说明从机不存在或忙。
+
+**本章主机的位时序**：每一位分四个阶段，每阶段 Q 个 clk（`Q = f_clk / (4 × f_SCL)`；仿真里 Q = 8，只为了跑得快）。
+
+```
+阶段        A            B              C            D
+SCL     ___________/‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\_____________
+SDA     X 改数据 ===========================================
+        ^阶段开始时改 SDA
+                   ^放开 SCL，等线上 SCL 真的变高（从机可能拉伸）再数 Q 拍
+                                  ^阶段开始时采样 SDA，检查仲裁
+                                               ^拉低 SCL
+```
+
+SCL 高 2Q、低 2Q；SDA 在 SCL 下降后 Q 拍才变（保持时间），在 SCL 上升前 Q 拍已经稳定（建立时间）。START 和 STOP 也用同样的四阶段，只是在 SCL 高时改 SDA。
+
+**时钟拉伸**：从机把 SCL 拉低不放，主机"放开 SCL"后看到线仍然是低，就**一直等到 SCL 真的变高**再开始计高电平时间。所以主机必须回读 SCL 线，而不是只看自己的输出。同样的机制也实现了**多主机时钟同步**：多个主机同时产生 SCL 时，线上的低电平由最长的那个决定，高电平由最短的那个决定，所有主机都按线上的实际 SCL 走。
+
+**仲裁**：两个主机同时发 START（都看到总线空闲），各自发自己的地址和数据。每一位在 SCL 高时，主机回读 SDA：
+
+- 自己发 0，线一定是 0，不会有冲突。
+- 自己发 1（放开 SDA）却读到 0，说明别人在发 0。自己**仲裁失败**，立即放开 SDA 和 SCL，退出。
+- 胜者在整个过程中完全不知道有人和它竞争，它发出的每一位都原样出现在线上，所以**仲裁不破坏胜者的数据**。
+- 结论：逐位比较，**数值小的一方赢**（先出现 0 的一方）。两个主机发同样的地址时，比较会延续到后面的数据字节。
+
+**总线挂死与恢复**：主机在从机发送读数据的中途复位，从机可能正拉低 SDA 等待下一个 SCL。主机看到 SDA 为低发不出 START，总线就挂死了。标准恢复方法是主机手动打最多 9 个 SCL 脉冲，每个脉冲后检查 SDA，从机把这个字节"送完"后会放开 SDA，这时主机再发 STOP。
+
+### 6.3 RTL 讲解
+
+**主机**（`lab/I2C/i2c_master.v`）是字节级命令接口：`cmd` = START / WRITE / READ / STOP，每条命令完成时 `rsp_valid` 单拍有效，带回 `rdata`、`ack_n`、`arb_lost`。连续命令之间主机停在 HOLD 状态，SCL 保持低，占着总线。开漏用 `*_oe` 表示："1 = 拉低，0 = 放开"；`*_i` 是线上实际电平，先两级同步。
+
+```verilog
+// ---------- 一位 ----------
+B_A: if (tdone) begin scl_oe <= 1'b0; tmr <= QM1; st <= B_B; end     // 放开 SCL
+B_B: if (!scl_s) tmr <= QM1;                 // 时钟拉伸 / 多主机时钟同步
+     else if (tdone) begin
+         tmr <= QM1; st <= B_C;
+         if (bitn == 4'd8)      ack_r <= sda_s;              // 第 9 位：读应答
+         else if (is_read)      sh <= {sh[6:0], sda_s};
+         else if (sh[7] && !sda_s) begin     // 发 1 却看到 0：别的主机在发 0
+             scl_oe <= 1'b0; sda_oe <= 1'b0;
+             arb_lost <= 1'b1; rsp_valid <= 1'b1;
+             st <= IDLE;
+         end
+     end
+B_C: if (tdone) begin scl_oe <= 1'b1; tmr <= QM1; st <= B_D; end     // 拉低 SCL
+B_D: if (tdone) begin                                               // SCL 低的后半段改 SDA
+    tmr <= QM1;
+    if (bitn == 4'd8) begin
+        sda_oe <= 1'b0; rdata <= sh; ack_n <= ack_r; rsp_valid <= 1'b1; st <= HOLD;
+    end else begin
+        bitn <= bitn + 1'b1; st <= B_A;
+        if (bitn == 4'd7)  sda_oe <= is_read ? ~nack : 1'b0;   // 应答位：读时主机回 ACK/NACK
+        else if (is_read)  sda_oe <= 1'b0;                      // 读：放开 SDA 让从机驱动
+        else begin         sda_oe <= ~sh[6]; sh <= {sh[6:0], 1'b0}; end
+    end
+end
+```
+
+- **`if (!scl_s) tmr <= QM1`** 是时钟拉伸的全部实现：放开 SCL 后只要线上还是低，计数器就一直重装，高电平的 Q 拍从 SCL 真正变高才开始算。START（`ST_B`）和 STOP（`SP_B`）里也有同样的等待。变异 M2 去掉数据位里的这一句，从机一拉伸就错位。
+- **仲裁检测在采样点**：`sh[7]` 是本位要发的值，发 1 读到 0 立即放开两根线、报 `arb_lost`。读数据和应答位不检查，因为那时 SDA 本来就是从机在驱动。
+- **SDA 在 SCL 低的中间改**（B_D 结束、下一个 B_A 开始），离 SCL 两个沿都有 Q 拍的距离，满足建立 / 保持时间。
+
+**从机**（`lab/I2C/i2c_slave.v`）：7 位地址（参数 `ADDR`），16 个寄存器，带自增指针，是传感器 / EEPROM 的典型协议。运行在系统时钟上，SCL / SDA 三级打拍后检测边沿：
+
+```verilog
+wire scl_rise =  scl_r[1] & ~scl_r[2];
+wire scl_fall = ~scl_r[1] &  scl_r[2];
+wire start_d  = scl_s & scl_r[2] & ~sda_r[1] &  sda_r[2];   // SCL 高时 SDA 下降
+wire stop_d   = scl_s & scl_r[2] &  sda_r[1] & ~sda_r[2];   // SCL 高时 SDA 上升
+
+assign scl_oe = (scnt != 8'd0);                               // 时钟拉伸
+
+if (start_d) begin
+    st <= S_ADDR; bitc <= 4'd0; ackph <= 1'b0; sda_oe <= 1'b0;   // 任何时候都能重新同步
+end else if (stop_d) begin
+    st <= S_IDLE; sda_oe <= 1'b0;
+end else if (st != S_IDLE && st != S_IGNORE) begin
+    if (scl_rise) ...                       // SCL 上升沿采样 SDA
+    if (scl_fall) begin
+        if (!ackph && bitc == 4'd8) begin   // 8 位收完，进入应答位
+            ackph <= 1'b1;
+            case (st)
+                S_ADDR:  if (sh[7:1] == ADDR) sda_oe <= 1'b1;  // 地址匹配才 ACK
+                         else                  st <= S_IGNORE;
+                S_PTR:   begin ptr <= sh[3:0]; sda_oe <= 1'b1; end
+                S_WDATA: begin regs[ptr] <= sh; ptr <= ptr + 1'b1; sda_oe <= 1'b1; end
+                default: sda_oe <= 1'b0;                        // S_READ：放开，听主机应答
+            endcase
+        end else if (ackph) begin           // 应答位结束
+            ackph <= 1'b0; bitc <= 4'd0;
+            scnt  <= stretch;               // 拉住 SCL stretch 个 clk
+            ...                             // 读：装载下一个字节（主机回 NACK 则停止发送）
+        end else if (st == S_READ) begin    // 读的第 2~8 位在 SCL 下降后换
+            sda_oe <= ~tsh[6];
+            tsh    <= {tsh[5:0], 1'b0};
+        end
+    end
+end
+```
+
+- **START / STOP 检测优先于一切**：不论从机处在什么状态，看到 START 就回到收地址；这也让重复起始自然成立。
+- 从机只在检测到 SCL 下降之后才改 SDA，同步延迟就是它的保持时间。
+- 地址不匹配进入 `S_IGNORE`，直到下一个 START / STOP，不会干扰总线。
+- `stretch` 输入模拟"数据还没准备好"：每个应答位结束后把 SCL 再拉低 `stretch` 个 clk。
+
+常见错误：
+
+| 错误 | 后果 |
+|------|------|
+| SCL / SDA 用推挽输出 1 | 与其他器件的 0 冲突（电源短路）；应答、拉伸、仲裁全部失效 |
+| SCL 高时改 SDA | 被所有从机当成 START / STOP |
+| 主机只看自己的 SCL 输出，不回读线 | 不支持时钟拉伸（变异 M2：从机一拉伸就错位） |
+| 多主机系统不做仲裁检测 | 两个主机的数据在线上被"线与"成第三个值，双方都以为自己成功（变异 M1） |
+| 读最后一个字节回 ACK | 从机继续驱动下一个字节的 MSB，SDA 若为 0 主机就发不出 STOP |
+| 从机在 SCL 上升沿就改 SDA | 违反"SCL 高时 SDA 稳定"，可能被看成 STOP / START |
+| 从机状态机只在 STOP 时复位 | 主机用重复起始时从机不认新的地址字节 |
+| 地址写成 8 位格式（0xA0）当 7 位用 | 地址差一倍，永远 NACK |
+| 上电 / 复位后不做总线恢复 | 从机拉住 SDA，总线挂死 |
+
+### 6.4 仿真
+
+```bash
+cd 12_Bus_Interfaces/lab/I2C && bash run_sim.sh
+bash mutation.sh
+```
+
+`tb_i2c.v`：两个 `i2c_master` 和一个 `i2c_slave`（地址 0x50）挂在同一条总线上。总线用 `tri1 scl, sda` 模拟上拉电阻，每个器件 `assign scl = x_scl_oe ? 1'b0 : 1'bz`，Verilog 的多驱动线自然实现线与。
+
+- **参考模型**：16 个寄存器 + 指针，按从机协议更新；仿真开始时模型和从机寄存器预置相同的随机值。
+- **引脚监视器**只看 SCL / SDA：START / STOP 只能出现在字节边界。"字节边界"是指第 9k 个时钟之后的那个 SCL 高电平，因为发 Sr / P 之前主机要先放开 SCL，这会多出一个上升沿。监视器还统计 START / STOP 个数和 SCL 最长低电平。
+- **P1**：m0 随机做 400 笔事务。40% 写 1–4 字节；30% 设指针后重复起始读 1–4 字节；20% 从当前指针直接读；10% 访问不存在的地址 0x23（期望 NACK）。每笔事务有 1/3 概率让从机拉伸 20–60 个 clk。
+- **P2 仲裁**：m0 和 m1 同时（相差 0–3 个 clk）向同一从机写不同的 `{指针, 数据}`。两者地址字节相同，比较会延续到指针和数据字节，期望数值小的一方赢。检查输家报 `arb_lost`、赢家的写不受影响；100 次之后把 16 个寄存器全部读回比对。
+
+```
+===== tb_i2c =====
+---------------------------------------------------------------
+P1 m0: write=168 read=192 (bytes checked 463) wrong-addr NACK=40  stretched txns=130
+   bus monitor: START(incl. Sr)=515 STOP=400  max SCL low=630 ns (nominal 160 ns)
+P2 arbitration: 100/100 trials OK (winner data written, loser flagged arb_lost)
+---------------------------------------------------------------
+PASS
+```
+
+- 400 笔事务有 400 个 STOP，START 515 个：多出的 115 个是"设指针后读"事务里的重复起始。
+- SCL 正常低电平 160 ns（2Q），最长 630 ns，主要是从机最长 60 个 clk 的拉伸，再加上同步、检测延迟和命令间隙。130 笔拉伸事务全部正确，说明主机按线上的实际 SCL 工作。
+- 100 次仲裁全部是预期的一方赢。两个主机的 SCL 起始相差 0–3 个 clk，被线与同步到一起（B_B 的等待同时实现了时钟同步）；输家在第一个"发 1 读到 0"的位退出，赢家的数据完整写入，最后的全寄存器读回也证明了这一点。
+
+**写监视器时踩过的坑**：第一版监视器要求 START / STOP 出现时"本次 START 以来的 SCL 上升沿数是 9 的整数倍"，结果报了 617 处 "START inside a byte"，而功能检查全部正确。原因是 Sr / P 之前主机先放开 SCL，产生第 9k+1 个上升沿，SDA 才在这个高电平里跳变。检查器本身写错和 RTL 写错在输出上看起来一样，**报错时先确认检查规则是按规范写的**。
+
+变异测试：
+
+```
+===== M1: 去掉仲裁检测 =====
+P1 m0: write=168 read=192 (bytes checked 463) wrong-addr NACK=40  stretched txns=130
+ERROR @5615115000: arbitration result wrong
+ERROR @5625125000: arbitration result wrong
+P2 arbitration: 0/100 trials OK (winner data written, loser flagged arb_lost)
+FAIL (114 errors)
+===== M2: 数据位忽略时钟拉伸 =====
+ERROR @52335000: ptr not ACKed
+ERROR @55575000: addr R not ACKed
+P1 m0: write=168 read=192 (bytes checked 463) wrong-addr NACK=40  stretched txns=130
+P2 arbitration: 100/100 trials OK (winner data written, loser flagged arb_lost)
+FAIL (553 errors)
+```
+
+- **M1**：单主机的 P1 完全正常，只有 P2 抓到。没有仲裁时两个主机都以为自己成功了，线上实际写进去的是两个值"线与"后的结果，双方都没察觉。114 处错误里有 100 处是每次仲裁各报一次的 "arbitration result wrong"。
+- **M2**：从机一拉伸，主机的"SCL 高"阶段就在 SCL 实际为低时过去了，从机少看到时钟，后面的应答和数据全部错位。P2 不拉伸，所以通过。**拉伸只有在从机真的拉伸时才会暴露**，testbench 的从机一定要有可配的拉伸。
+
+波形（`i2c.vcd`，只录 P1 前 20 笔事务）：看 `scl`、`sda`、`m0_scl_oe`、`s_scl_oe`、`s_sda_oe`、`u_m0.st`。`s_scl_oe=1` 期间 `m0_scl_oe=0` 但 `scl` 仍为低，主机停在 B_B 等待，这就是时钟拉伸。
+
+### 6.5 变体与扩展
+
+- **10 位地址**：首字节为 `11110 A9 A8 R/W`，第二字节为 A7–A0。
+- **通用呼叫 / 设备 ID**：地址 0x00 广播；另有若干保留地址。
+- **SMBus / PMBus**：在 I2C 上加超时（SCL 低超过 35 ms 即复位）、PEC 校验字节、固定的命令格式，常用于电源管理。
+- **I3C**：MIPI 的后继标准，兼容 I2C 器件，支持推挽高速模式（12.5 MHz）、带内中断、动态地址分配。
+- **毛刺滤波**：规范要求快速模式输入滤掉 50 ns 以下的尖峰。数字实现就是同步后再加几级一致性滤波，本章从机只做了同步。
+- **从机用 SCL 做时钟**：可以做到很低功耗（没有 SCL 时不翻转），但 START / STOP 要用 SDA 的沿去检测，属于异步设计，一般避免。
+- **主机的总线恢复与超时**：检测 SDA 长时间为低时自动打 9 个 SCL 脉冲；SCL 被拉伸过久时报超时。
+
+### 6.6 面试要点与常见追问
+
+- **两根线开漏 + 上拉**：线与，任何器件拉低即为低；这是应答、拉伸、仲裁的基础。
+- **SDA 只在 SCL 低时变**；START = SCL 高时 SDA 下降，STOP = SCL 高时 SDA 上升；Sr 不释放总线换方向。
+- **每字节 9 个时钟**：8 位 MSB 先 + 接收方的 ACK（拉低）；读最后一字节主机回 NACK。
+- **读寄存器**：`S | ADDR+W | 指针 | Sr | ADDR+R | 数据… | NA | P`；7 位地址 0x50 = 写 0xA0 / 读 0xA1。
+- **时钟拉伸**：从机拉住 SCL，主机放开 SCL 后回读线，等真变高再计时。
+- **仲裁**：发 1 读到 0 即失败并退出，数值小的赢；胜者数据不受影响；同样的回读机制也实现了多主机时钟同步。
+- **追问：总线挂死**——从机拉住 SDA；主机打最多 9 个 SCL 脉冲直到 SDA 放开，再发 STOP。
+- **追问：上拉电阻怎么选**——上升时间（RC）满足速率等级的要求，下限由拉低电流（3 mA 等）决定。
+- **追问：I2C 为什么慢**——开漏上升沿靠电阻充电，总线电容越大越慢；还有半双工和每字节一个应答位的开销。
+
+**一句话**：I2C 靠开漏线与实现两根线上的多器件通信，SDA 只在 SCL 低时变、START / STOP 是 SCL 高时 SDA 的跳变；每字节 9 个时钟带应答，从机拉住 SCL 就是时钟拉伸，发 1 读到 0 就是仲裁失败。
 
 ---
 
@@ -894,10 +1643,10 @@ M3 第一次跑时 testbench 没有看门狗，丢拍后在途计数永远清不
 在 PowerShell 里一次跑完本章全部实验和变异测试：
 
 ```powershell
-wsl -u root -e bash -lc "cd '/mnt/c/Users/Administrator/Desktop/workspace/DIGITAL IC LEARNING/12_Bus_Interfaces/lab' && for d in APB AHB AXI; do sed -i 's/\r$//' `$d/*.sh; bash `$d/run_sim.sh 2>&1 | grep -E '=====|PASS|FAIL|ERROR|%'; bash `$d/mutation.sh 2>&1; done"
+wsl -u root -e bash -lc "cd '/mnt/c/Users/Administrator/Desktop/workspace/DIGITAL IC LEARNING/12_Bus_Interfaces/lab' && for d in APB AHB AXI UART SPI I2C; do sed -i 's/\r$//' `$d/*.sh; bash `$d/run_sim.sh 2>&1 | grep -E '=====|PASS|FAIL|ERROR|%'; bash `$d/mutation.sh 2>&1; done"
 ```
 
-预期：`run_sim.sh` 的每次仿真都打印 `PASS`，没有 Verilator 告警（`%Warning`）；`mutation.sh` 的每个变异都打印 `FAIL`。
+预期：`run_sim.sh` 的每次仿真都打印 `PASS`，没有 Verilator 告警（`%Warning`）；`mutation.sh` 的每个变异都打印 `FAIL`。UART 的波特率扫描行里带 `%`，也会被 grep 列出来，属于正常输出。全部跑完约 1–2 分钟。
 
 注意：
 
@@ -947,3 +1696,27 @@ wsl -u root -e bash -lc "cd '/mnt/c/Users/Administrator/Desktop/workspace/DIGITA
 - INCR：`next = (addr & ~(bytes-1)) + bytes`
 - WRAP：`mask = (len+1) × bytes − 1`，`next = (addr & ~mask) | ((addr + bytes) & mask)`
 - AHB 的 WRAP4/8/16 同理，拍数固定为 4/8/16。
+
+**三种片外接口对比**：
+
+| | UART | SPI | I2C |
+|--|------|-----|-----|
+| 线数 | 2（TX、RX） | 3 + 每从机 1 根 CS | 2（SCL、SDA） |
+| 时钟 | 不传，双方约定波特率 | 主机送 SCLK | 主机送 SCL，从机可拉伸 |
+| 方向 | 全双工 | 全双工 | 半双工 |
+| 输出类型 | 推挽 | 推挽（MISO 未选中时高阻） | 开漏 + 上拉 |
+| 寻址 | 无（点对点） | 片选 | 7 / 10 位地址 |
+| 应答 / 校验 | 可选校验位 | 无 | 每字节 ACK / NACK |
+| 多主机 | 否 | 否 | 是（仲裁） |
+| 典型速率 | 9600 bps – 几 Mbps | 几 – 几十 MHz | 100k / 400k / 1M |
+| 位序 | LSB 先 | 通常 MSB 先 | MSB 先 |
+
+**关键条件**：
+
+| 接口 | 条件 |
+|------|------|
+| UART 采样 | 起始沿后每位第 7 / 8 / 9 个 tick 三取二；容限约 `0.5 / 位数` |
+| SPI 采样 | CPHA=0 前沿采样；CPHA=1 后沿采样；模式 0 / 3 上升沿，1 / 2 下降沿 |
+| I2C START / STOP | SCL 高时 SDA 下降 / 上升 |
+| I2C 数据 | SCL 低时变，SCL 高时稳定；第 9 个时钟接收方拉低 = ACK |
+| I2C 仲裁 | 发 1 读到 0 → 失败退出，数值小的赢 |
