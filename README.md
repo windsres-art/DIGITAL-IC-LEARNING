@@ -179,7 +179,9 @@ NN_Chapter_Name/
 | 形式验证 | 属性检查、等价性检查 |
 | 门级仿真 | SDF 反标、X 传播 |
 
-## 12_Bus_Interfaces —— 总线与接口 ★★★　⬜
+## 12_Bus_Interfaces —— 总线与接口 ★★★　🚧
+
+已完成：`README.md` 第 1–3 节 APB、AHB、AXI4 与 AXI-Stream（每节含原理与时序、RTL、真实仿真输出、面试要点）及三总线速查表；`lab/` 下 `APB`（APB4 主机状态机 + RW/RO/W1C 寄存器从机，WAIT=0/2 吞吐 2.00/4.00 拍每笔）、`AHB`（AHB-Lite 同步读 SRAM 从机带写后读旁路、译码器 + 数据阶段响应 MUX + 两拍 ERROR 默认从机，8 种 burst + BUSY 的周期级主机 BFM）、`AXI`（AXI4 RAM 从机支持 FIXED/INCR/WRAP、窄传输、非对齐、WSTRB、4 笔 outstanding；五通道独立随机主机 + 按 ID 记分板 + 协议检查；outstanding 1 vs 4 单拍读吞吐 0.333 vs 0.997），testbench 均自检查并在 WSL 跑通，另有 8 个变异测试全部被抓到。AXI-Stream 只讲协议并链接到 03 章的握手 / skid buffer / 位宽转换实现。待写：UART、SPI、I2C。
 
 | 小节 | 内容提纲 |
 |------|----------|

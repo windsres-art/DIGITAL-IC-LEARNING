@@ -1683,7 +1683,7 @@ dec  bin   gray
 
 **Gray 转二进制**：把上式反过来解，`b[N-1] = g[N-1]`，`b[i] = b[i+1] ^ g[i]`，展开就是**从最高位到第 i 位的前缀异或**：
 
- b_i = g_{N-1} \oplus g_{N-2} \oplus \cdots \oplus g_i 
+$$b_i = g_{N-1} \oplus g_{N-2} \oplus \cdots \oplus g_i$$ 
 
 逐级写法里 `b[0]` 要串 N−1 级异或。宽指针可以用对数级写法：`b = g; b ^= b >> 1; b ^= b >> 2; b ^= b >> 4; …`。每一步之后每一位覆盖的"上方位数"翻倍，⌈log2 N⌉ 步就覆盖到最高位，和并行前缀加法器是同一个思路（`../04_Arithmetic_Units/README.md`，待写）。
 
