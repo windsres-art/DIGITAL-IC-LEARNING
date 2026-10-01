@@ -9,17 +9,17 @@ module axi_fifo #(
 )(
     input          clk,
     input          rst_n,
-    input          push,
+    input          push,           // 本拍写入队尾。满时忽略
     input  [W-1:0] din,
-    output         full,
-    input          pop,
-    output [W-1:0] dout,
-    output         empty
+    output         full,           // 两项指针绕圈标志不同、低位相同：写了一整圈
+    input          pop,            // 本拍取走队头。空时忽略
+    output [W-1:0] dout,           // 队头。非空时一直有效，不必等 pop（首字直通）
+    output         empty           // 读写指针相等
 );
-    localparam D = 1 << AW;
+    localparam D = 1 << AW;        // 深度
 
     reg [W-1:0] mem [0:D-1];
-    reg [AW:0]  wp, rp;
+    reg [AW:0]  wp, rp;            // 多 1 位区分满和空。低 AW 位才是 mem 下标
 
     assign empty = (wp == rp);
     assign full  = (wp[AW] != rp[AW]) && (wp[AW-1:0] == rp[AW-1:0]);

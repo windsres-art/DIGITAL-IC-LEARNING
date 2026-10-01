@@ -192,7 +192,17 @@ NN_Chapter_Name/
 | SPI | 四种模式（CPOL/CPHA）、主从实现 |
 | I2C | 起止条件、应答、开漏、仲裁 |
 
-## 13_Computer_Architecture_SoC —— 体系结构与 SoC ★★　⬜
+## 13_Computer_Architecture_SoC —— 体系结构与 SoC ★★　✅
+
+已完成：`README.md` 覆盖下表全部 6 节（每节含原理、RTL 解读、真实仿真输出、变异测试分析、面试要点）及速查表。`lab/` 下：
+- `RV32I`：两遍汇编器支持伪指令、`%hi/%lo`、Zicsr 与字符串，10 个程序与 GNU as 逐字一致；独立 ISS；单周期核通过 commit 接口与 ISS 逐条比对，5 个自检查程序。
+- `Pipeline`：五级流水线，前递开 / 关 × 预测器总不跳 / 静态 BTFN / BTB + 2 bit；与 ISS 逐条比对，周期数与解析时序模型逐拍相等；前递让 CPI 从约 2.0 降到 1.1–1.6；实测 2 bit 计数器在交替分支上 400/400 全错。
+- `Cache`：参数化组相联 cache，直接映射到全相联、真 LRU、写回 / 写直达；两层参考模型 + Python 独立复算；`cache_sim.py` 做 5 组实验。
+- `DRAM`：DDR3-1600 控制器，4 种地址映射 × 开 / 关页 × bank 预激活、刷新；DRAM 器件模型逐命令检查 tRCD / tRP / tRAS / tRC / tRRD / tFAW / tCCD / tWR / tWTR / tRTP / tRFC / 刷新间隔与读写换向；Python 独立复算行命中分类；实测顺序访问 5.57 GB/s（峰值 87%），XOR 映射把 4 个数据流从 0.64 提到 5.99 GB/s，预激活让随机负载提升 67%。
+- `Trap`：流水线核加 Zicsr 与机器模式精确 trap（11 种异常 / 中断原因、`wfi`、总线等待与错误），CLINT、PLIC、描述符链 DMA；trace-driven co-simulation（ISS 按日志复核每次退休和 trap）；实测中断延迟 2–6 拍。
+- `SoC`：2 主 × 6 从 crossbar（轮转仲裁、默认从机）、APB 桥、带反压的 UART，从 ROM 启动（crt0 拷 `.data`、清 `.bss`）；引脚级 UART 监视器、上电随机化、未初始化内存检查、仲裁公平性断言。
+
+所有 testbench 自检查并在 WSL 跑通，Verilator lint 0 告警。共 50 个变异测试：49 个被抓到，剩下 1 个（cache）经分析是等价变异。调试中发现并修复了一个真实 bug：访存等待时前递值丢失，只在随机等待下暴露。未做的：cache 没有接进 SoC，所以 DMA 与 cache 一致性只讲原理、没有实验；SoC 只有单时钟、单复位域。
 
 | 小节 | 内容提纲 |
 |------|----------|

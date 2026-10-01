@@ -15,29 +15,30 @@ module ahb_decoder_mux #(
 )(
     input             hclk,
     input             hresetn,
-    input      [31:0] haddr,
-    input      [1:0]  htrans,
-    output            hsel0,
-    output            hsel1,
-    input             hreadyout0,
-    input             hresp0,
+    input      [31:0] haddr,          // 地址阶段的地址，用来译码 HSEL
+    input      [1:0]  htrans,         // 只看 bit 1：NONSEQ/SEQ 才让默认从机进入 ERROR
+    output            hsel0,          // 地址落在 S0 窗口
+    output            hsel1,          // 地址落在 S1 窗口
+    input             hreadyout0,     // S0 数据阶段是否结束
+    input             hresp0,         // S0 响应，0=OKAY，1=ERROR
     input      [31:0] hrdata0,
     input             hreadyout1,
     input             hresp1,
     input      [31:0] hrdata1,
-    output reg        hready,
+    output reg        hready,         // 送回主机的全局 HREADY，按数据阶段那一台从机选
     output reg        hresp,
     output reg [31:0] hrdata
 );
     localparam SEL_S0 = 2'd0, SEL_S1 = 2'd1, SEL_DEF = 2'd2, SEL_NONE = 2'd3;
 
+    // 掩码把窗口以外的位清掉，再和基址比。S0 低 12 位忽略 = 4 KB，S1 低 10 位忽略 = 1 KB
     assign hsel0 = ((haddr & S0_MASK) == S0_BASE);
     assign hsel1 = ((haddr & S1_MASK) == S1_BASE);
-    wire   hsel_def = ~hsel0 & ~hsel1;
-    wire   unused_htrans0 = htrans[0];
+    wire   hsel_def = ~hsel0 & ~hsel1;     // 两个窗口都不是，交给默认从机
+    wire   unused_htrans0 = htrans[0];     // 不区分 SEQ / NONSEQ，接出来避免未读告警
 
-    wire [1:0] sel_ap = hsel0 ? SEL_S0 : hsel1 ? SEL_S1 : SEL_DEF;
-    reg  [1:0] sel_dp;
+    wire [1:0] sel_ap = hsel0 ? SEL_S0 : hsel1 ? SEL_S1 : SEL_DEF;  // 地址阶段选中谁
+    reg  [1:0] sel_dp;                     // 数据阶段选中谁。响应 MUX 必须用它，不能用当前 HSEL
 
     always @(posedge hclk or negedge hresetn) begin
         if (!hresetn)    sel_dp <= SEL_NONE;
@@ -45,8 +46,8 @@ module ahb_decoder_mux #(
     end
 
     // ---------------- 默认从机：两拍 ERROR ----------------
-    // 第 1 拍 HREADY=0 HRESP=1（给主机一拍时间决定是否取消后续传输），
-    // 第 2 拍 HREADY=1 HRESP=1
+    // err1：ERROR 的第一拍，HREADY=0、HRESP=1，给主机一拍决定要不要取消后续 burst
+    // err2：第二拍，HREADY=1、HRESP=1，传输在这一拍结束
     reg err1, err2;
     always @(posedge hclk or negedge hresetn) begin
         if (!hresetn) begin
