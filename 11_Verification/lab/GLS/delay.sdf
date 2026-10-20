@@ -1,0 +1,15 @@
+(DELAYFILE
+ (SDFVERSION "3.0")
+ (DESIGN "tb_delay")
+ (DATE "2026-10-20")
+ (VENDOR "educational")
+ (PROGRAM "hand-written")
+ (VERSION "1")
+ (DIVIDER /)
+ (TIMESCALE 1ns)
+ (CELL
+  (CELLTYPE "delay_cell")
+  (INSTANCE dut)
+  (DELAY (ABSOLUTE (IOPATH A Y (2:3:4) (2:3:4))))
+ )
+)

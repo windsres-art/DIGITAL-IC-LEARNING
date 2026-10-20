@@ -1,0 +1,32 @@
+# 教学层次：TOP 包含常供电 PMU 和可关断实例 u_sw。
+# 此模板未绑定本章 TB、未绑定工艺库；本机只核对 Tcl 可解析性。
+# UPF 命令/选项需按目标工具支持版本复核，不能直接当作签核文件。
+upf_version 2.1
+create_power_domain PD_TOP -include_scope
+create_power_domain PD_SW -elements {u_sw}
+create_supply_port VDD
+create_supply_port VSS
+create_supply_net VDD
+create_supply_net VSS
+create_supply_net VDD_SW
+connect_supply_net VDD -ports {VDD}
+connect_supply_net VSS -ports {VSS}
+set_domain_supply_net PD_TOP -primary_power_net VDD -primary_ground_net VSS
+set_domain_supply_net PD_SW -primary_power_net VDD_SW -primary_ground_net VSS
+create_power_switch SW -domain PD_SW \
+    -input_supply_port {VIN VDD} -output_supply_port {VOUT VDD_SW} \
+    -control_port {EN power_en} -on_state {ON VIN {EN}}
+set_isolation ISO_SW -domain PD_SW -applies_to outputs \
+    -clamp_value 0 -isolation_power_net VDD -isolation_ground_net VSS
+set_isolation_control ISO_SW -domain PD_SW \
+    -isolation_signal iso_en -isolation_sense high -location parent
+set_retention RET_SW -domain PD_SW -elements {u_sw/state_reg} \
+    -retention_power_net VDD -retention_ground_net VSS
+set_retention_control RET_SW -domain PD_SW \
+    -save_signal {save_req high} -restore_signal {restore_req high}
+add_port_state VDD -state {ON 0.8}
+add_port_state VSS -state {GND 0.0}
+add_port_state SW/VOUT -state {ON 0.8} -state {OFF off}
+create_pst SYSTEM -supplies {VDD VDD_SW}
+add_pst_state RUN -pst SYSTEM -state {ON ON}
+add_pst_state SLEEP -pst SYSTEM -state {ON OFF}

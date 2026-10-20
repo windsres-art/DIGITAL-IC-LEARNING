@@ -62,7 +62,9 @@ NN_Chapter_Name/
 | 竞争冒险与毛刺 | 成因与消除 |
 | 有限状态机理论 | Moore 与 Mealy、状态编码（二进制/独热/Gray）、状态化简 |
 
-## 02_HDL_Verilog_SystemVerilog —— 硬件描述语言 ★★★　⬜
+## 02_HDL_Verilog_SystemVerilog —— 硬件描述语言 ★★★　✅
+
+已完成：`README.md` 覆盖下表全部七节，`INTERVIEW_QA.md` 44 道概念/找错/计算题，`lab/run_all.sh` 一键回归六组实验。`Expressions` 穷举 W=2/4/8 共 65,808 对输入及固定四态探针；`Scheduling` 检查两级流水线、停顿、复位、Active/Inactive/NBA 更新与阻塞反例；`FSM_Style` 三段式控制器检查 72 步、10 笔完整事务及复位中止；`Generate` 检查 12 组位宽/通道数/旁路或寄存配置、非法选择与 3 个非法参数；`SV_Design` 用 package/enum/packed struct/interface/modport/always_comb/always_ff 实现 ALU 响应通道，Verilator 实测收发 67 笔、反压 41 周期；`Pitfalls` 复现 latch、多驱动、组合环、敏感列表遗漏导致的 RTL/综合网表差异及 casex/casez 的 X/Z 掩盖。整章在 WSL 回归通过；前四组正确 RTL 做 lint 与 Yosys 结构检查（Generate 旁路配置豁免未使用时钟/复位端口告警），SV 组做完整顶层 lint 和二态仿真，四态反例用 Icarus。SV 组未做综合，整章未做 STA 或完整形式证明。
 
 | 小节 | 内容提纲 |
 |------|----------|
@@ -96,7 +98,9 @@ NN_Chapter_Name/
 | 位宽转换 | 宽转窄、窄转宽 |
 | PWM 与消抖 | PWM 发生器、按键消抖 |
 
-## 04_Arithmetic_Units —— 运算单元 ★★　⬜
+## 04_Arithmetic_Units —— 运算单元 ★★　✅
+
+已完成：`README.md` 第 1–5 节，`INTERVIEW_QA.md` 84 题，`lab/run_all.sh` 回归全章五组实验。`lab/Adders` 覆盖 RCA、分组 CLA、进位选择、CSA、Kogge–Stone 风格前缀及完整三数求和：8 组配置、19,420 次向量检查及组合等价证明，18 个通用门结构对比，3 个变异全部抓到。`lab/Multipliers` 覆盖可选 signed/unsigned 的迭代移位相加、signed radix-4 Booth（组合加法链）、unsigned Wallace 风格行压缩树：1/3/4/8/12 位合计 5,479 个组合向量、1,373 笔迭代完成事务及 5 次复位中止，检查 W 周期延迟与 W+2 启动间隔；小位宽组合形式证明通过，5 个变异全部抓到。`lab/Dividers` 覆盖恢复/不恢复余数算法及 signed/unsigned 模式：同样五个位宽共 2,836 笔输入、5,672 组商/余数检查，覆盖除零、溢出、逐拍余数不变量、5,592 个反压保持周期和 10 次复位中止；验证 W 拍延迟与 W+2 启动间隔，5 个变异全部抓到。`lab/Fixed_Float` 实现四种舍入与饱和的 signed 定点转换器、binary32 六类位模式分类器：8 组参数共 22,120 个定点向量、4,610 个浮点分类位模式，精确分数参考及 6 个变异检查通过。`lab/CORDIC` 实现圆周旋转/向量模式、全圆象限处理、旋转增益预补偿：固定 (24,20) 格式，8/12/16/20 轮共 6,260 笔事务、12,456 个反压保持周期、8 次复位中止，独立数学参考与 6 个变异检查通过；记录不同迭代次数及小幅度向量的实际误差。五组均在 WSL 实测通过 lint、自检查仿真及结构检查，整章回归通过。未做工艺库映射/STA/PPA，也未实现流水化 Booth-Wallace 融合或除法时序形式证明；浮点实验仅为分类器与数值示例，未实现完整 FPU；CORDIC 向量输出保留增益，未实现近零向量规格化、双曲/线性变体或任意输入的形式误差证明。
 
 | 小节 | 内容提纲 |
 |------|----------|
@@ -149,7 +153,9 @@ NN_Chapter_Name/
 | 网表检查与等价性 | 形式等价性检查（Formality/Conformal）、`check_design` |
 | Yosys 实验 | 用 Yosys 综合本仓库电路、看网表与单元统计 |
 
-## 09_Low_Power_Design —— 低功耗 ★★　⬜
+## 09_Low_Power_Design —— 低功耗 ★★　✅
+
+已完成：`README.md` 覆盖功耗组成、门控时钟、多阈值/多电压、电源关断与 UPF、DVFS；`INTERVIEW_QA.md` 36 题。`lab/Activity` 在 4/8/16 位配置完成 3,072 周期操作数隔离检查，并实际运行 Yosys clockgate 自动插入 ICG，完成 128 周期原 RTL/门控网表对比与关钟时异步复位。`lab/Power_Sequence` 验证 6 次保存/掉电 X 污染/隔离/恢复，275 个时钟检查点及一次复位中止；`lab/DVFS` 验证 33 笔两档切换请求、274 次顺序安全检查。WSL 中 lint、结构检查、自检查仿真和 6 个错误变异全部通过，`lab/run_all.sh` 可一键回归。功耗数字为明确假设下的公式模型，活动变化不等于真实功耗；UPF 教学模板只做 Tcl 解析，未绑定层次/工艺库或完成 UPF 语义、电源感知仿真与物理签核。
 
 | 小节 | 内容提纲 |
 |------|----------|
@@ -159,7 +165,7 @@ NN_Chapter_Name/
 | 电源关断与 UPF | 电源关断、隔离单元、保持寄存器、UPF 基础 |
 | DVFS | 动态电压频率调节 |
 
-## 10_DFT —— 可测性设计 ★　⬜
+## 10_DFT —— 可测性设计 ★　✅
 
 | 小节 | 内容提纲 |
 |------|----------|
@@ -168,7 +174,9 @@ NN_Chapter_Name/
 | MBIST | 存储器内建自测试、March 算法 |
 | JTAG 与边界扫描 | TAP 状态机、边界扫描 |
 
-## 11_Verification —— 验证 ★★　⬜
+已完成：[章节正文](10_DFT/README.md)、[40 道面试问答](10_DFT/INTERVIEW_QA.md)及 Scan_ATPG、MBIST、JTAG 三组实验。WSL 实测通过：14 个 stuck-at 故障穷举（13 个可检测）、120 组 RTL 对照向量、三种扫描宽度共 96 次装载/捕获/读出；三种存储深度共 14 次 March 运行（含 11 次故障注入）、590 次操作顺序检查与 3 次复位中止；TAP 16 个状态、32 条转移及边界扫描、BYPASS、暂停/恢复和复位场景。配套 Verilator lint、Yosys 结构/无 latch 检查及 7 项变异检查通过。覆盖率分母与实验边界已注明；不代表工业 ATPG、物理 at-speed 测试、完整 SRAM 故障覆盖或 IEEE 1149.1 合规签核。
+
+## 11_Verification —— 验证 ★★　✅
 
 | 小节 | 内容提纲 |
 |------|----------|
@@ -178,6 +186,8 @@ NN_Chapter_Name/
 | UVM | 组件结构、phase、sequence/driver/monitor/scoreboard、factory |
 | 形式验证 | 属性检查、等价性检查 |
 | 门级仿真 | SDF 反标、X 传播 |
+
+已完成：[章节正文](11_Verification/README.md)覆盖上述六节，[40 道问答与计算题](11_Verification/INTERVIEW_QA.md)，五组 WSL 实验与一键回归。握手通道在 W=1/8/13、三个种子下共接受 1,707 笔、输出 1,698 笔、复位取消 9 笔；SV 类/继承/约束随机/mailbox/semaphore/covergroup 实测三个种子共 216 笔，定义的八格交叉覆盖全部命中；SVA 检查捕获、保持、清空与 ready 关系；W=4 安全属性归纳证明及两个可达性目标通过，W=8 RTL/综合网表等价通过；另完成零延迟 GLS、手写单元 SDF 延迟窗口与四态 X 探针。RTL lint/结构检查及 7 项错误变异检查通过。UVM 为架构与工程流程讲解，未运行 UVM 类库；SDF 为独立教学模型，不代表工艺库 timing-check、布线后 GLS 或时序签核；未做全参数证明和完整代码覆盖率闭环。
 
 ## 12_Bus_Interfaces —— 总线与接口 ★★★　✅
 

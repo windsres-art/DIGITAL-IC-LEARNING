@@ -1,13 +1,17 @@
 // =============================================================================
-// RV32I 分支比较器（纯组合）
+// RV32I 分支比较器（纯组合）。只服务 beq/bne/blt/bge/bltu/bgeu
+//   funct3[2:1] 选比较方式，funct3[0] 把结果取反：
+//     00 beq  → 再异或 bit0 变成 bne
+//     10 blt  → 再异或 bit0 变成 bge
+//     11 bltu → 再异或 bit0 变成 bgeu
+//   比较为真时 taken=1，核把下一 PC 改成 PC+imm；否则走 PC+4。
+//   分支指令不写寄存器，也没有单独的“访存段”。
 // =============================================================================
-// 分支条件：funct3 = 000 beq / 001 bne / 100 blt / 101 bge / 110 bltu / 111 bgeu
-// 规律：funct3[2:1] 选比较方式，funct3[0] 取反（bne = !beq，bge = !blt）
 module rv32i_branch (
-    input  [31:0] a,
-    input  [31:0] b,
+    input  [31:0] a,          // rs1
+    input  [31:0] b,          // rs2
     input  [2:0]  funct3,
-    output        taken
+    output        taken       // 1 = 条件成立，要跳
 );
     reg cond;
     always @* begin

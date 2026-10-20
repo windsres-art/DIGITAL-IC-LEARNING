@@ -1,0 +1,17 @@
+[tasks]
+prove
+cover
+[options]
+prove: mode prove
+cover: mode cover
+depth 12
+[engines]
+smtbmc z3
+[script]
+read -formal elastic_alu.v formal_channel.sv
+prep -top formal_channel
+async2sync
+dffunmap
+[files]
+../Handshake/elastic_alu.v
+formal_channel.sv
