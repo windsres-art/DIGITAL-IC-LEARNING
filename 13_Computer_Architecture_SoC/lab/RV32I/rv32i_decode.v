@@ -1,6 +1,8 @@
 // =============================================================================
 // RV32I 译码器（纯组合）：指令 → 字段、立即数、控制信号
-//   单周期核与五级流水线共用。
+//   单周期核、基础五级流水线、Trap / SoC 核共用。
+//   - jal / branch 的 ALU 算 PC + imm，jalr 的 ALU 算 rs1 + imm。
+//     分支比较器独立比较 rs1 / rs2；jal / jalr 的写回值另取 PC+4。
 //   - 立即数五种格式（I/S/B/U/J）的拼接是面试手写重点：符号位永远是 instr[31]，
 //     所以符号扩展不依赖格式，这是 RISC-V 编码设计的用心之处。
 //   - uses_rs1 / uses_rs2 标出指令是否真的读源寄存器。流水线的冒险检测要用它，
@@ -15,7 +17,7 @@ module rv32i_decode (
     output     [2:0]  funct3,       // 访存宽度 / 分支条件
     output reg [31:0] imm,
     output reg [3:0]  alu_op,       // {funct7[5], funct3} 的编码，见 rv32i_alu.v
-    output reg        alu_a_pc,     // ALU A 口选 PC（auipc）
+    output reg        alu_a_pc,     // ALU A 口选本条 PC（auipc / jal / branch）
     output reg        alu_a_zero,   // ALU A 口选 0（lui）
     output reg        alu_b_imm,    // ALU B 口选立即数
     output reg        reg_we,
@@ -66,7 +68,8 @@ module rv32i_decode (
         uses_rs1   = 1'b0;
         uses_rs2   = 1'b0;
         illegal    = 1'b0;
-        // 单周期没有多拍阶段：下面说的“段”都在这一拍走完。
+        // 下面的“段”列出指令实际使用的功能；单周期中都在一拍内完成。
+        // 五级流水线仍逐级传递指令，不访存 / 不写回只是关闭对应使能，不是跳过 MEM / WB 级。
         // 取指 = 用 PC 拿出 instr；译码 = 本模块；执行 = ALU 或比较；
         // 访存 = 读写数据存储器；写回 = 把结果写入 rd。
         //
@@ -84,17 +87,21 @@ module rv32i_decode (
             OP_LUI:   begin imm = imm_u; alu_a_zero = 1'b1; reg_we = 1'b1; end
 
             // auipc  Add Upper Immediate to PC。U 型：imm[31:12] | rd | opcode
-            //   rd = PC + {imm20, 12'b0}。A 口选 PC，用来拼 PC 相对地址的高 20 位。
+            //   rd = PC + {imm20, 12'b0}。A 口选 PC，用来构造 PC 相对地址。
             //   段：取指、译码、执行、写回。不读寄存器，不访存。
             OP_AUIPC: begin imm = imm_u; alu_a_pc   = 1'b1; reg_we = 1'b1; end
 
             // jal  Jump and Link。J 型：imm[20|10:1|11|19:12] | rd | opcode
             //   rd = PC+4（wb_sel=2），下一 PC = PC + imm_j。imm_j 最低位恒 0，范围约 ±1 MB。
-            //   目标用 PC+imm，不经过 ALU。段：取指、译码、执行、写回。不访存。
-            OP_JAL:   begin imm = imm_j; is_jal = 1'b1; reg_we = 1'b1; wb_sel = 2'd2; end
+            //   ALU 算 PC+imm_j；PC+4 由独立加法路径提供，不能把目标地址写回 rd。
+            //   段：取指、译码、执行、写回。不读源寄存器，不访存。
+            OP_JAL: begin
+                imm = imm_j; alu_a_pc = 1'b1; alu_b_imm = 1'b1; // alu_op 默认 ADD
+                is_jal = 1'b1; reg_we = 1'b1; wb_sel = 2'd2;
+            end
 
             // jalr  Jump and Link Register。I 型：imm[11:0] | rs1 | funct3 | rd | opcode
-            //   例：jalr ra, 0(t0) 是函数返回或间接跳转。
+            //   例：jalr ra, 0(t0) 是间接调用；jalr x0, 0(ra) 是函数返回（ret）。
             //   rd = PC+4。下一 PC = (rs1 + imm_i) 的最低位清 0，目标由 ALU 的加法给出。
             //   funct3 必须是 000，否则 illegal。
             //   段：取指、译码、执行、写回。不访存。
@@ -111,10 +118,12 @@ module rv32i_decode (
             //   101 bge   Branch if Greater than or Equal（有符号）
             //   110 bltu  Branch if Less Than Unsigned
             //   111 bgeu  Branch if Greater than or Equal Unsigned
-            //   010、011 没有这条指令。alu_b_imm=0 只是默认值改掉，比较本身不走 ALU。
+            //   010、011 没有这条指令。ALU 用 PC 和 imm_b 算目标，比较器同时比较 rs1 / rs2。
+            //   因此 ALU 的 B 口选立即数，但 uses_rs1 / uses_rs2 仍都为 1，不能漏掉比较依赖。
             //   段：取指、译码、执行。不访存，不写回。
             OP_BRANCH: begin
-                imm = imm_b; is_branch = 1'b1; alu_b_imm = 1'b0;
+                imm = imm_b; alu_a_pc = 1'b1; alu_b_imm = 1'b1; // alu_op 默认 ADD
+                is_branch = 1'b1;
                 uses_rs1 = 1'b1; uses_rs2 = 1'b1;
                 illegal = (funct3 == 3'b010) || (funct3 == 3'b011);
             end

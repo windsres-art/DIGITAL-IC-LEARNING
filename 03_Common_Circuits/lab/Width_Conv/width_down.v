@@ -37,7 +37,7 @@ module width_down #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            keep <= {RATIO{1'b0}};
+            keep <= 0;
             last <= 1'b0;
         end else if (in_fire) begin
             keep <= in_keep;

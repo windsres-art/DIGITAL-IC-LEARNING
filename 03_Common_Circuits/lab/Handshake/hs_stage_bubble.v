@@ -22,7 +22,7 @@ module hs_stage_bubble #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_valid <= 1'b0;
-            out_data  <= {DW{1'b0}};
+            out_data  <= 0;
         end else if (in_valid && in_ready) begin
             out_valid <= 1'b1;
             out_data  <= in_data;

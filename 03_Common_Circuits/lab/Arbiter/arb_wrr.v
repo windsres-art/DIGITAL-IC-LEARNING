@@ -21,7 +21,7 @@ module arb_wrr #(
     genvar g;
     generate
         for (g = 0; g < N; g = g + 1) begin : g_hc
-            assign has_credit[g] = (credit[g] != {WW{1'b0}});
+            assign has_credit[g] = (credit[g] != 0);
         end
     endgenerate
 
@@ -33,7 +33,7 @@ module arb_wrr #(
     reg  [N-1:0]   last;
     wire [N-1:0]   base = {last[N-2:0], last[N-1]};
     wire [2*N-1:0] dreq = {cand, cand};
-    wire [2*N-1:0] dgnt = dreq & ~(dreq - {{N{1'b0}}, base});
+    wire [2*N-1:0] dgnt = dreq & ~(dreq - base);
     assign gnt = dgnt[N-1:0] | dgnt[2*N-1:N];
 
     integer i;
@@ -44,8 +44,8 @@ module arb_wrr #(
         end else if (|req) begin
             last <= gnt;
             for (i = 0; i < N; i = i + 1) begin
-                if (reload) credit[i] <= WEIGHTS[i*WW +: WW] - {{(WW-1){1'b0}}, gnt[i]};
-                else        credit[i] <= credit[i]          - {{(WW-1){1'b0}}, gnt[i]};
+                if (reload) credit[i] <= WEIGHTS[i*WW +: WW] - gnt[i];
+                else        credit[i] <= credit[i]          - gnt[i];
             end
         end
     end

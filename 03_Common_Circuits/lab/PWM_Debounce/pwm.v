@@ -24,7 +24,7 @@ module pwm #(
     wire [CW-1:0] per_use  = SHADOW ? period_q : period;
     wire [CW:0]   duty_use = SHADOW ? duty_q   : duty;
     wire          wrap     = (cnt >= per_use);  // 用 >=：周期被改小时也能立即回绕
-    wire [CW-1:0] cnt_nxt  = wrap ? {CW{1'b0}} : cnt + 1'b1;
+    wire [CW-1:0] cnt_nxt  = wrap ? 0 : cnt + 1;
     // 新周期从第 0 拍开始就用新的 duty
     wire [CW:0]   duty_nxt = (SHADOW && wrap) ? duty : duty_use;
 
@@ -33,9 +33,9 @@ module pwm #(
     // 复位后 period_q = 0，第一拍就回绕并装入外部的 period / duty
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cnt      <= {CW{1'b0}};
-            period_q <= {CW{1'b0}};
-            duty_q   <= {(CW+1){1'b0}};
+            cnt      <= 0;
+            period_q <= 0;
+            duty_q   <= 0;
             pwm_out  <= 1'b0;
         end else begin
             cnt     <= cnt_nxt;

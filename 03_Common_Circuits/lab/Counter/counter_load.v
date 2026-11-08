@@ -6,8 +6,8 @@
 //     或产生周期性脉冲。tc 是组合输出，下一级用它当使能，不要当时钟。
 // =============================================================================
 module counter_load #(
-    parameter WIDTH = 4,
-    parameter MAX   = 11                // 计数范围 0..MAX，模 MAX+1
+    parameter WIDTH = 4,               // >= 1
+    parameter MAX   = 11                // 计数范围 0..MAX，MAX 须能用 WIDTH 位表示
 )(
     input                  clk,
     input                  rst_n,
@@ -18,21 +18,19 @@ module counter_load #(
     output reg [WIDTH-1:0] cnt,
     output                 tc
 );
-    localparam [WIDTH-1:0] MAXV = MAX;
-
-    wire at_max = (cnt == MAXV);
-    wire at_min = (cnt == {WIDTH{1'b0}});
+    wire at_max = (cnt == MAX);
+    wire at_min = (cnt == 0);
 
     assign tc = en & ~load & (up ? at_max : at_min);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            cnt <= {WIDTH{1'b0}};
+            cnt <= 0;
         else if (load)
             cnt <= din;
         else if (en) begin
-            if (up) cnt <= at_max ? {WIDTH{1'b0}} : cnt + 1'b1;
-            else    cnt <= at_min ? MAXV          : cnt - 1'b1;
+            if (up) cnt <= at_max ? 0 : cnt + 1;
+            else    cnt <= at_min ? MAX : cnt - 1;
         end
     end
 

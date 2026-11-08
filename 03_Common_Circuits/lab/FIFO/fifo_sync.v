@@ -28,13 +28,13 @@ module fifo_sync #(
     wire rd_fire = rd_en & ~empty;
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)       wptr <= {(AW+1){1'b0}};
-        else if (wr_fire) wptr <= wptr + 1'b1;
+        if (!rst_n)       wptr <= 0;
+        else if (wr_fire) wptr <= wptr + 1;
     end
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)       rptr <= {(AW+1){1'b0}};
-        else if (rd_fire) rptr <= rptr + 1'b1;
+        if (!rst_n)       rptr <= 0;
+        else if (rd_fire) rptr <= rptr + 1;
     end
 
     // 存储体不带复位：这样综合工具才能把它映射成 SRAM / 寄存器堆；
@@ -44,7 +44,7 @@ module fifo_sync #(
     end
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)       rdata <= {DW{1'b0}};
+        if (!rst_n)       rdata <= 0;
         else if (rd_fire) rdata <= mem[rptr[AW-1:0]];
     end
 

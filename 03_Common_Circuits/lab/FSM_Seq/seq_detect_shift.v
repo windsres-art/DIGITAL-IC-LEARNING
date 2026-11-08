@@ -8,7 +8,7 @@
 //   OVERLAP=0：匹配后 fill 清零，下一次必须收满 LEN 个新位
 // =============================================================================
 module seq_detect_shift #(
-    parameter           LEN      = 4,
+    parameter           LEN      = 4,  // >= 3
     parameter [LEN-1:0] PATTERN  = 4'b1101,
     parameter           OVERLAP  = 1,
     parameter           USE_FILL = 1
@@ -19,23 +19,21 @@ module seq_detect_shift #(
     output dout
 );
     localparam CW = $clog2(LEN);
-    localparam integer  LAST_I = LEN - 1;
-    localparam [CW-1:0] LAST   = LAST_I[CW-1:0];
 
     reg [LEN-2:0] win;
     reg [CW-1:0]  fill;                 // 饱和在 LEN-1
 
-    wire full_enough = USE_FILL ? (fill == LAST) : 1'b1;
+    wire full_enough = USE_FILL ? (fill == LEN - 1) : 1'b1;
     assign dout = full_enough && ({win, din} == PATTERN);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            win  <= {(LEN-1){1'b0}};
-            fill <= {CW{1'b0}};
+            win  <= 0;
+            fill <= 0;
         end else begin
             win <= {win[LEN-3:0], din}; // 丢掉最老的一位（LEN >= 3）
-            if (dout && !OVERLAP)  fill <= {CW{1'b0}};
-            else if (fill != LAST) fill <= fill + 1'b1;
+            if (dout && !OVERLAP)  fill <= 0;
+            else if (fill != LEN - 1) fill <= fill + 1;
         end
     end
 

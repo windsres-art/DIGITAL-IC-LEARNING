@@ -2,8 +2,8 @@
 // RV32I 单周期核：每个时钟周期做完一条指令（CPI = 1）
 //   一拍里面按组合逻辑走过：取指 → 译码 → 读寄存器 → 执行 →（load/store 才访存）→ 写回。
 //   真正在沿上更新的只有 PC、寄存器堆、数据存储器，以及停机标志。
-//   哈佛结构：指令口和数据口分开。两个存储器都是组合读、同步写
-//   （真实 SRAM 是同步读，第 2 节流水线才按那个来排）。
+//   哈佛结构：指令口和数据口分开。testbench 中两者都是组合读，数据存储器在上升沿写；
+//   指令存储器只在仿真开始时加载。第 2 节的基础流水线沿用同一存储器时序。
 //   周期由最长的 load 决定：
 //     PC → 取指 → 译码 → 读寄存器 → ALU 算地址 → 数据存储器 → 对齐 / 符号扩展 → 写回。
 //   ecall / ebreak：本条提交后 halted=1，PC 不再前进，当作程序结束。
@@ -73,20 +73,21 @@ module rv32i_single #(
         .raddr1(rs1), .rdata1(rs1_val), .raddr2(rs2), .rdata2(rs2_val));
 
     // ---------------- 执行 ----------------
-    // A 口：lui 用 0，auipc 用 PC，其余用 rs1。B 口：立即数指令和地址计算用 imm，R 型用 rs2
+    // A 口：lui 用 0，auipc / jal / branch 用本条 PC，其余用 rs1。
+    // B 口：立即数、访存和跳转目标计算用 imm，R 型运算用 rs2。
     wire [31:0] alu_a = alu_a_zero ? 32'd0 : alu_a_pc ? pc : rs1_val;
     wire [31:0] alu_b = alu_b_imm  ? imm   : rs2_val;
     wire [31:0] alu_y;
     rv32i_alu u_alu (.a(alu_a), .b(alu_b), .op(alu_op), .y(alu_y));
 
+    // branch 的 ALU 正在算 PC+imm；比较器直接比较寄存器值，不取 ALU 的 PC / imm 输入。
     wire br_taken;                           // 分支条件是否成立。不是分支时核也不看它
     rv32i_branch u_br (.a(rs1_val), .b(rs2_val), .funct3(funct3), .taken(br_taken));
 
     wire [31:0] pc_plus4  = pc + 32'd4;
-    wire [31:0] pc_target = pc + imm;        // jal 和分支共用。jalr 的目标在 ALU 里算
-    wire [31:0] next_pc   = is_jalr                 ? {alu_y[31:1], 1'b0} :
-                            (is_jal | (is_branch & br_taken)) ? pc_target :
-                                                      pc_plus4;
+    // 三类控制转移的目标都来自 ALU；只有 jalr 额外清 bit 0。PC+4 仍独立提供顺序地址和链接值。
+    wire [31:0] pc_target = is_jalr ? {alu_y[31:1], 1'b0} : alu_y;
+    wire [31:0] next_pc   = (is_jal | is_jalr | (is_branch & br_taken)) ? pc_target : pc_plus4;
 
     // ---------------- 访存 ----------------
     // 地址用 ALU 结果。低 2 位只送给对齐模块；送到存储器的地址把低 2 位清掉

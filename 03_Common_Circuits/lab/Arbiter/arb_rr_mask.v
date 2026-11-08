@@ -13,13 +13,11 @@ module arb_rr_mask #(
     input      [N-1:0] req,
     output     [N-1:0] gnt
 );
-    localparam [N-1:0] ONE = {{(N-1){1'b0}}, 1'b1};
-
     reg  [N-1:0] last;
-    wire [N-1:0] mask     = ~(last | (last - ONE));
+    wire [N-1:0] mask     = ~(last | (last - 1));
     wire [N-1:0] req_m    = req & mask;
-    wire [N-1:0] gnt_m    = req_m & ~(req_m - ONE);
-    wire [N-1:0] gnt_u    = req   & ~(req   - ONE);
+    wire [N-1:0] gnt_m    = req_m & ~(req_m - 1);
+    wire [N-1:0] gnt_u    = req   & ~(req   - 1);
 
     assign gnt = (|req_m) ? gnt_m : gnt_u;
 

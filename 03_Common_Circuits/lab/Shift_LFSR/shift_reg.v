@@ -6,7 +6,7 @@
 //   WIDTH 个触发器加一个 4 选 1 MUX
 // =============================================================================
 module shift_reg #(
-    parameter WIDTH = 8
+    parameter WIDTH = 8                 // >= 2
 )(
     input                  clk,
     input                  rst_n,
@@ -17,7 +17,7 @@ module shift_reg #(
     output reg [WIDTH-1:0] q
 );
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) q <= {WIDTH{1'b0}};
+        if (!rst_n) q <= 0;
         else begin
             case (mode)
                 2'b01:   q <= {ser_msb, q[WIDTH-1:1]};

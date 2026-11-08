@@ -27,13 +27,11 @@ module ecc_secded_dec #(
         end
     endfunction
 
-    localparam [R-1:0] NMAX = N[R-1:0];     // 2^R >= N + 1，N 一定放得下
-
     integer p, j, di;
     reg     ovr;
     reg [N:0] fixed;
     always @(*) begin
-        syn = {R{1'b0}};
+        syn = 0;
         for (j = 0; j < R; j = j + 1)
             for (p = 1; p <= N; p = p + 1)
                 if (((p >> j) & 1) != 0) syn[j] = syn[j] ^ code[p];
@@ -43,17 +41,17 @@ module ecc_secded_dec #(
         err_corr   = 1'b0;
         err_uncorr = 1'b0;
         if (ovr) begin
-            if (syn <= NMAX) begin
+            if (syn <= N) begin
                 fixed[syn] = ~fixed[syn];
                 err_corr   = 1'b1;
             end else begin
                 err_uncorr = 1'b1;
             end
-        end else if (syn != {R{1'b0}}) begin
+        end else if (syn != 0) begin
             err_uncorr = 1'b1;
         end
 
-        data = {DW{1'b0}};
+        data = 0;
         di   = 0;
         for (p = 1; p <= N; p = p + 1)
             if ((p & (p - 1)) != 0) begin

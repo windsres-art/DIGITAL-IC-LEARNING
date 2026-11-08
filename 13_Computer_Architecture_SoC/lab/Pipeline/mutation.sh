@@ -34,18 +34,18 @@ run() {  # $1 名称  $2 变异后的 rv32i_pipe.v  [$3 变异后的 regfile]
 
 echo "===== M1: 前递优先级反了 ====="
 # 把 rs1 的 MEM/WB 那一行挪到 EX/MEM 那一行之后：后赋值者赢，于是 MEM/WB 优先
-sed -e '/if (w_valid \&\& w_reg_we \&\& w_rd != 5.d0 \&\& w_rd == x_rs1) ex_a_fwd = w_wdata;/{h;d}' \
-    -e '/if (m_valid \&\& m_reg_we \&\& m_rd != 5.d0 \&\& m_rd == x_rs1) ex_a_fwd = m_result;/G' \
+sed -e '/if (mem_wb_valid \&\& mem_wb_reg_we \&\& mem_wb_rd != 5.d0 \&\& mem_wb_rd == id_ex_rs1) ex_a_fwd = mem_wb_wdata;/{h;d}' \
+    -e '/if (ex_mem_valid \&\& ex_mem_reg_we \&\& ex_mem_rd != 5.d0 \&\& ex_mem_rd == id_ex_rs1) ex_a_fwd = ex_mem_result;/G' \
     rv32i_pipe.v > build_mut/pipe_m1.v
 run m1 build_mut/pipe_m1.v
 
 echo "===== M2: 前递不排除 x0 ====="
-sed 's/m_valid \&\& m_reg_we \&\& m_rd != 5.d0 \&\& m_rd == x_rs1/m_valid \&\& m_reg_we \&\& m_rd == x_rs1/' \
+sed 's/ex_mem_valid \&\& ex_mem_reg_we \&\& ex_mem_rd != 5.d0 \&\& ex_mem_rd == id_ex_rs1/ex_mem_valid \&\& ex_mem_reg_we \&\& ex_mem_rd == id_ex_rs1/' \
     rv32i_pipe.v > build_mut/pipe_m2.v
 run m2 build_mut/pipe_m2.v
 
 echo "===== M3: 没有 load-use 停顿 ====="
-sed 's/wire load_use  = dep_x \& x_mem_re;/wire load_use  = 1'"'"'b0;/' rv32i_pipe.v > build_mut/pipe_m3.v
+sed 's/wire load_use  = dep_ex \& id_ex_mem_re;/wire load_use  = 1'"'"'b0;/' rv32i_pipe.v > build_mut/pipe_m3.v
 run m3 build_mut/pipe_m3.v
 
 echo "===== M4: 寄存器堆没有写穿透 ====="
@@ -53,13 +53,13 @@ sed 's/rv32i_regfile #(.BYPASS(1)) u_rf/rv32i_regfile #(.BYPASS(0)) u_rf/' rv32i
 run m4 build_mut/pipe_m4.v
 
 echo "===== M5: 预测错只冲 ID/EX，不冲 IF/ID ====="
-sed 's/end else if (flush_young | fetch_stop) begin/end else if (ex_kill | fetch_stop) begin/' rv32i_pipe.v > build_mut/pipe_m5.v
+sed 's/wire if_id_clear = flush_young | fetch_stop;/wire if_id_clear = ex_kill | fetch_stop;/' rv32i_pipe.v > build_mut/pipe_m5.v
 run m5 build_mut/pipe_m5.v
 
 echo "===== M6: store 数据不用前递值 ====="
-sed 's/m_rs2_val   <= ex_b_fwd;/m_rs2_val   <= x_rs2_val;/' rv32i_pipe.v > build_mut/pipe_m6.v
+sed 's/ex_mem_rs2_val   <= ex_b_fwd;/ex_mem_rs2_val   <= id_ex_rs2_val;/' rv32i_pipe.v > build_mut/pipe_m6.v
 run m6 build_mut/pipe_m6.v
 
 echo "===== M7: ecall 不杀更年轻的指令 ====="
-sed 's/wire ex_kill = x_valid \& (x_is_system | ex_exc);/wire ex_kill = x_valid \& ex_exc;/' rv32i_pipe.v > build_mut/pipe_m7.v
+sed 's/wire ex_kill = id_ex_valid \& (id_ex_is_system | ex_exc);/wire ex_kill = id_ex_valid \& ex_exc;/' rv32i_pipe.v > build_mut/pipe_m7.v
 run m7 build_mut/pipe_m7.v

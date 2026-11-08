@@ -10,10 +10,10 @@
 //   全 0 是异或型 LFSR 的死状态（0 异或任何抽头还是 0），SEED 不能为 0。
 // =============================================================================
 module lfsr #(
-    parameter           N      = 8,
+    parameter           N      = 8,    // >= 2
     parameter [N-1:0]   TAPS   = 8'b1011_1000,
     parameter           GALOIS = 0,
-    parameter [N-1:0]   SEED   = {{(N-1){1'b0}}, 1'b1}
+    parameter [N-1:0]   SEED   = 1
 )(
     input              clk,
     input              rst_n,
@@ -32,7 +32,7 @@ module lfsr #(
         if (!rst_n)
             q <= SEED;
         else if (en) begin
-            if (GALOIS) q <= {q[N-2:0], 1'b0} ^ (q[N-1] ? GMASK : {N{1'b0}});
+            if (GALOIS) q <= {q[N-2:0], 1'b0} ^ (q[N-1] ? GMASK : 0);
             else        q <= {q[N-2:0], fib_fb};
         end
     end

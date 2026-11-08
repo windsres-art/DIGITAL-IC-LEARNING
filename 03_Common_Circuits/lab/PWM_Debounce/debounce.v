@@ -8,7 +8,7 @@
 //   实际 N 按时间算：50 MHz 时钟、20 ms 消抖时间 → N = 1,000,000，计数器 20 位
 // =============================================================================
 module debounce #(
-    parameter N    = 1000000,
+    parameter N    = 1000000,           // >= 1
     parameter IDLE = 1'b1
 )(
     input      clk,
@@ -19,8 +19,6 @@ module debounce #(
     output reg release_p            // 松开（回到 IDLE）单周期脉冲
 );
     localparam CW = (N > 1) ? $clog2(N) : 1;
-    localparam integer  LAST_I = N - 1;
-    localparam [CW-1:0] LAST   = LAST_I[CW-1:0];
 
     // 同步器复位成 IDLE：复位释放时不会误报一次按下
     reg [1:0]    sync;
@@ -34,7 +32,7 @@ module debounce #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cnt       <= {CW{1'b0}};
+            cnt       <= 0;
             key_level <= IDLE;
             press     <= 1'b0;
             release_p <= 1'b0;
@@ -42,14 +40,14 @@ module debounce #(
             press     <= 1'b0;
             release_p <= 1'b0;
             if (key_s == key_level) begin
-                cnt <= {CW{1'b0}};                  // 一回到原电平就重新计
-            end else if (cnt == LAST) begin
-                cnt       <= {CW{1'b0}};
+                cnt <= 0;                  // 一回到原电平就重新计
+            end else if (cnt == N - 1) begin
+                cnt       <= 0;
                 key_level <= key_s;
                 press     <= (key_s != IDLE);
                 release_p <= (key_s == IDLE);
             end else begin
-                cnt <= cnt + 1'b1;
+                cnt <= cnt + 1;
             end
         end
     end

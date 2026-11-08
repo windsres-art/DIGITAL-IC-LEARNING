@@ -7,7 +7,7 @@
 module crc_serial #(
     parameter           W    = 8,
     parameter [W-1:0]   POLY = 8'h07,
-    parameter [W-1:0]   INIT = {W{1'b0}}
+    parameter [W-1:0]   INIT = 0
 )(
     input              clk,
     input              rst_n,

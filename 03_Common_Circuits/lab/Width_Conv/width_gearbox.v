@@ -25,33 +25,27 @@ module width_gearbox #(
 );
     localparam CAP = IN_W + OUT_W;
     localparam FW  = $clog2(CAP + 1);
-    localparam integer  IN_I  = IN_W;
-    localparam integer  OUT_I = OUT_W;
-    localparam integer  CAP_I = CAP;
-    localparam [FW-1:0] IN_F  = IN_I[FW-1:0];
-    localparam [FW-1:0] OUT_F = OUT_I[FW-1:0];
-    localparam [FW-1:0] CAP_F = CAP_I[FW-1:0];
 
     reg  [CAP-1:0] buf_q;
     reg  [FW-1:0]  fill;
 
-    assign out_valid = (fill >= OUT_F);
+    assign out_valid = (fill >= OUT_W);
     assign out_data  = buf_q[OUT_W-1:0];
     wire   out_fire  = out_valid & out_ready;
 
-    wire [FW-1:0]  fill_aft = out_fire ? fill - OUT_F : fill;
-    assign in_ready  = (fill_aft <= CAP_F - IN_F);
+    wire [FW-1:0]  fill_aft = out_fire ? fill - OUT_W : fill;
+    assign in_ready  = (fill_aft <= CAP - IN_W);
     wire   in_fire   = in_valid & in_ready;
 
     wire [CAP-1:0] kept   = out_fire ? (buf_q >> OUT_W) : buf_q;
     // fill_aft 以上的旧位清零再或入新字，buf_q 本身就不需要复位
     wire [CAP-1:0] mask   = ~({CAP{1'b1}} << fill_aft);
-    wire [CAP-1:0] ins    = {{(CAP-IN_W){1'b0}}, in_data} << fill_aft;
-    wire [CAP-1:0] buf_nx = (kept & mask) | (in_fire ? ins : {CAP{1'b0}});
+    wire [CAP-1:0] ins    = in_data << fill_aft;
+    wire [CAP-1:0] buf_nx = (kept & mask) | (in_fire ? ins : 0);
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) fill <= {FW{1'b0}};
-        else        fill <= fill_aft + (in_fire ? IN_F : {FW{1'b0}});
+        if (!rst_n) fill <= 0;
+        else        fill <= fill_aft + (in_fire ? IN_W : 0);
     end
 
     always @(posedge clk) begin

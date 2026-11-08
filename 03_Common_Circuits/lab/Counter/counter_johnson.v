@@ -15,15 +15,13 @@ module counter_johnson #(
     input              en,
     output reg [N-1:0] q
 );
-    localparam [N-2:0] ONE = {{(N-2){1'b0}}, 1'b1};
-
     // trans[i]=1 表示 q[i+1] 和 q[i] 不同；合法 ⇔ trans 至多一个 1
     wire [N-2:0] trans = q[N-1:1] ^ q[N-2:0];
-    wire         legal = ((trans & (trans - ONE)) == {(N-1){1'b0}});
+    wire         legal = ((trans & (trans - 1)) == 0);
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)      q <= {N{1'b0}};
-        else if (SELF_START && !legal) q <= {N{1'b0}};
+        if (!rst_n)      q <= 0;
+        else if (SELF_START && !legal) q <= 0;
         else if (en)     q <= {q[N-2:0], ~q[N-1]};
     end
 

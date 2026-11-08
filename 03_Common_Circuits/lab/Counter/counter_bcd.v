@@ -24,8 +24,8 @@ module counter_bcd #(
             wire      is9 = (d == 4'd9);
 
             always @(posedge clk or negedge rst_n) begin
-                if (!rst_n)        d <= 4'd0;
-                else if (carry[g]) d <= is9 ? 4'd0 : d + 4'd1;
+                if (!rst_n)        d <= 0;
+                else if (carry[g]) d <= is9 ? 0 : d + 1;
             end
 
             assign carry[g+1]    = carry[g] & is9;

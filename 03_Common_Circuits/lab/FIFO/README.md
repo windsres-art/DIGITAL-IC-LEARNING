@@ -1,7 +1,7 @@
 # 异步 FIFO 学习笔记
 
 > 本文件是早期的详细笔记（调试过程、波形讲解），要点已并入章 README `../../README.md` 第 1 节。
-> 章 README 另有同步 FIFO `fifo_sync.v`、整理版异步 FIFO `fifo_async.v`（Gray 指针寄存输出）、自检查 testbench 与深度计算。
+> 手写复习从 [fifo_async.v](fifo_async.v) 开始。里面依次是存储槽、写域和读域。章 README 第 1.5 节配有说明，[精简前的源码](fifo_async.original.v.bak) 可供对照。
 
 基于本目录示例（`FIFO.v` / `FIFO_TB.v`）与调试、波形讨论整理。  
 仿真环境见仓库 `ascon-aead128-fast/README.md`：**WSL2 + OSS CAD Suite**，不要在 Windows 本机跑。
@@ -31,7 +31,8 @@
    正确：读 Gray → 写时钟；写 Gray → 读时钟（必须真正跨域）。
 2. **RAM 的 `else` 清零 `mem`** → 不写就擦数据；应只在 `w_en && !full` 时写。
 3. **复位循环用 `FIFO_data_size`** → 应按 `DEPTH` 清存储。
-4. **同步器/读指针复位宽度少 1 bit** → 应为 `FIFO_addr_size+1`。
+
+复位说明：指针本身需要 `FIFO_addr_size+1` 位；清零直接写 `pointer <= 0` 即可。较短的全 0 常量赋给较宽寄存器时也会补零，因此“复位常量少写一个 0”本身不是功能 bug。
 
 ---
 
@@ -97,8 +98,7 @@ din ──► [DFF1] ──► [DFF2] ──► dout（给逻辑用）
 ## 6. Verilog 小句法
 
 ```verilog
-w_pointer_bin <= {(FIFO_addr_size+1){1'b0}};  // 复制运算符：N 位全 0
-w_pointer_bin <= 0;                           // 等价，更常见
+w_pointer_bin <= 0;  // 整个指针清零，宽度由寄存器声明决定
 ```
 
 ---

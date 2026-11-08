@@ -169,7 +169,7 @@ module RAM #(
 	always @(posedge clk_w or negedge rst_w) begin
 		if (~rst_w) begin
 			for (i = 0; i < DEPTH; i = i + 1)
-				mem[i] <= {FIFO_data_size{1'b0}};
+				mem[i] <= 0;
 		end else if (w_en && !full) begin
 			mem[w_addr] <= data_in;
 		end
@@ -181,7 +181,7 @@ module RAM #(
 	// 改为：有效读才更新；否则保持。
 	always @(posedge clk_r or negedge rst_r) begin
 		if (~rst_r) begin
-			data_out <= {FIFO_data_size{1'b0}};
+			data_out <= 0;
 		end else if (r_en && !empty) begin
 			data_out <= mem[r_addr];
 		end
@@ -213,9 +213,9 @@ module write_full #(
 
 	always @(posedge clk_w or negedge rst_w) begin
 		if (~rst_w)
-			w_pointer_bin <= {(FIFO_addr_size+1){1'b0}};
+			w_pointer_bin <= 0;
 		else if (flag_wr)
-			w_pointer_bin <= w_pointer_bin + 1'b1;
+			w_pointer_bin <= w_pointer_bin + 1;
 		// else 保持
 	end
 
@@ -253,10 +253,10 @@ module read_empty #(
 
 	always @(posedge clk_r or negedge rst_r) begin
 		if (~rst_r)
-			// 【原 bug】宽度写成 FIFO_addr_size，少了指针多出来的那 1 bit
-			r_pointer_bin <= {(FIFO_addr_size+1){1'b0}};
+			// 整个指针清零，包括最高位的绕圈标志。
+			r_pointer_bin <= 0;
 		else if (r_en && !empty)
-			r_pointer_bin <= r_pointer_bin + 1'b1;
+			r_pointer_bin <= r_pointer_bin + 1;
 	end
 
 	assign r_pointer_gray = (r_pointer_bin >> 1) ^ r_pointer_bin;
@@ -285,9 +285,9 @@ module synchronization #(
 
 	always @(posedge clk or negedge rst) begin
 		if (~rst) begin
-			// 【原 bug】复位宽度写成 FIFO_addr_size，少 1 bit
-			dout_t <= {(FIFO_addr_size+1){1'b0}};
-			dout   <= {(FIFO_addr_size+1){1'b0}};
+			// 两级寄存器都清零。
+			dout_t <= 0;
+			dout   <= 0;
 		end else begin
 			dout_t <= din;    // 第 1 拍
 			dout   <= dout_t; // 第 2 拍（输出）

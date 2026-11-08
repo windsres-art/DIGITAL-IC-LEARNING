@@ -15,9 +15,9 @@ module prio_enc #(
 );
     integer i;
     always @(*) begin
-        idx = {W{1'b0}};
+        idx = 0;
         for (i = 0; i < N; i = i + 1)
-            if (req[i]) idx = i[W-1:0];
+            if (req[i]) idx = i;
     end
 
     assign valid = |req;

@@ -10,5 +10,5 @@ module decoder #(
     input               en,
     output [(1<<W)-1:0] out
 );
-    assign out = {{((1 << W) - 1){1'b0}}, en} << in;
+    assign out = en << in;
 endmodule

@@ -14,7 +14,7 @@ module mux_onehot #(
 );
     integer i;
     always @(*) begin
-        dout = {W{1'b0}};
+        dout = 0;
         for (i = 0; i < N; i = i + 1)
             dout = dout | (din[i*W +: W] & {W{sel[i]}});
     end

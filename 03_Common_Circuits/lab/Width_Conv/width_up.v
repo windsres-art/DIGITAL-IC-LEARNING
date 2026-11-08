@@ -23,27 +23,25 @@ module width_up #(
     output reg                  out_last
 );
     localparam CW = (RATIO > 1) ? $clog2(RATIO) : 1;
-    localparam integer  LAST_I = RATIO - 1;
-    localparam [CW-1:0] LAST   = LAST_I[CW-1:0];
 
     reg  [CW-1:0] cnt;                  // 下一个窄字写哪个槽
     assign in_ready = ~out_valid | out_ready;
 
     wire in_fire   = in_valid & in_ready;
-    wire done_word = in_fire & ((cnt == LAST) | in_last);
-    wire [RATIO-1:0] slot = {{(RATIO-1){1'b0}}, 1'b1} << cnt;
+    wire done_word = in_fire & ((cnt == RATIO - 1) | in_last);
+    wire [RATIO-1:0] slot = 1 << cnt;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cnt       <= {CW{1'b0}};
+            cnt       <= 0;
             out_valid <= 1'b0;
-            out_keep  <= {RATIO{1'b0}};
+            out_keep  <= 0;
             out_last  <= 1'b0;
         end else begin
             if (in_fire) begin
-                cnt      <= done_word ? {CW{1'b0}} : cnt + 1'b1;
+                cnt      <= done_word ? 0 : cnt + 1;
                 // cnt == 0 是新字的第一个窄字：清掉上一个字的 keep
-                out_keep <= ((cnt == {CW{1'b0}}) ? {RATIO{1'b0}} : out_keep) | slot;
+                out_keep <= ((cnt == 0) ? 0 : out_keep) | slot;
             end
             if (done_word)              out_valid <= 1'b1;
             else if (out_ready)         out_valid <= 1'b0;

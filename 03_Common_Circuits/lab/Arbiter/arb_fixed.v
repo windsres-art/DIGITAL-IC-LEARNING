@@ -10,5 +10,5 @@ module arb_fixed #(
     input  [N-1:0] req,
     output [N-1:0] gnt
 );
-    assign gnt = req & ~(req - {{(N-1){1'b0}}, 1'b1});
+    assign gnt = req & ~(req - 1);
 endmodule

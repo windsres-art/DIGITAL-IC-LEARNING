@@ -6,7 +6,7 @@
 //     没有空拍：每 WIDTH 个时钟正好输出一个字
 // =============================================================================
 module p2s #(
-    parameter WIDTH = 8
+    parameter WIDTH = 8                 // >= 2
 )(
     input              clk,
     input              rst_n,
@@ -17,27 +17,24 @@ module p2s #(
     output             sout_vld
 );
     localparam CW = $clog2(WIDTH + 1);
-    localparam integer  WIDTH_I = WIDTH;
-    localparam [CW-1:0] FULL    = WIDTH_I[CW-1:0];
-    localparam [CW-1:0] ONE     = {{(CW-1){1'b0}}, 1'b1};
 
     reg [WIDTH-1:0] sh;
     reg [CW-1:0]    cnt;
 
     assign sout     = sh[WIDTH-1];
-    assign sout_vld = (cnt != {CW{1'b0}});
-    assign ready    = (cnt <= ONE);
+    assign sout_vld = (cnt != 0);
+    assign ready    = (cnt <= 1);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sh  <= {WIDTH{1'b0}};
-            cnt <= {CW{1'b0}};
+            sh  <= 0;
+            cnt <= 0;
         end else if (load && ready) begin
             sh  <= pin;
-            cnt <= FULL;
+            cnt <= WIDTH;
         end else if (sout_vld) begin
             sh  <= {sh[WIDTH-2:0], 1'b0};
-            cnt <= cnt - ONE;
+            cnt <= cnt - 1;
         end
     end
 

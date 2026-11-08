@@ -8,27 +8,23 @@
 // =============================================================================
 module clk_div_frac #(
     parameter M = 87,
-    parameter D = 10                    // K = M / D，要求 M > D
+    parameter D = 10                    // K = M / D，要求 M > D > 0
 )(
     input      clk,
     input      rst_n,
     output reg tick
 );
     localparam AW = $clog2(M + D);
-    localparam integer  M_I = M;
-    localparam integer  D_I = D;
-    localparam [AW-1:0] MV  = M_I[AW-1:0];
-    localparam [AW-1:0] DV  = D_I[AW-1:0];
 
     reg  [AW-1:0] acc;                  // 始终 < M
-    wire [AW-1:0] sum = acc + DV;
+    wire [AW-1:0] sum = acc + D;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            acc  <= {AW{1'b0}};
+            acc  <= 0;
             tick <= 1'b0;
-        end else if (sum >= MV) begin
-            acc  <= sum - MV;
+        end else if (sum >= M) begin
+            acc  <= sum - M;
             tick <= 1'b1;
         end else begin
             acc  <= sum;

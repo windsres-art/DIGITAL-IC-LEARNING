@@ -24,13 +24,13 @@ module regfile #(
     reg [DW-1:0] rf [0:NR-1];
 
     always @(posedge clk)
-        if (we && waddr != {AW{1'b0}}) rf[waddr] <= wdata;
+        if (we && waddr != 0) rf[waddr] <= wdata;
 
     // 不要把读口写成 assign rdata1 = rd(raddr1) 这种函数调用：连续赋值只对函数的
     // 实参敏感，函数体里读的 rf / we / wdata 变了不会重新求值，仿真出旧值
     wire byp1 = (BYPASS != 0) && we && (waddr == raddr1);
     wire byp2 = (BYPASS != 0) && we && (waddr == raddr2);
 
-    assign rdata1 = (raddr1 == {AW{1'b0}}) ? {DW{1'b0}} : byp1 ? wdata : rf[raddr1];
-    assign rdata2 = (raddr2 == {AW{1'b0}}) ? {DW{1'b0}} : byp2 ? wdata : rf[raddr2];
+    assign rdata1 = (raddr1 == 0) ? 0 : byp1 ? wdata : rf[raddr1];
+    assign rdata2 = (raddr2 == 0) ? 0 : byp2 ? wdata : rf[raddr2];
 endmodule

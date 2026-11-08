@@ -19,10 +19,10 @@ module gray_cnt_pure #(
             b[i] = b[i+1] ^ gray[i];
     end
 
-    wire [N-1:0] b_nxt = b + {{(N-1){1'b0}}, en};
+    wire [N-1:0] b_nxt = b + en;
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) gray <= {N{1'b0}};
+        if (!rst_n) gray <= 0;
         else        gray <= b_nxt ^ (b_nxt >> 1);
     end
 endmodule

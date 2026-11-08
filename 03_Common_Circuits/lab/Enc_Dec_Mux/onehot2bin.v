@@ -13,8 +13,8 @@ module onehot2bin #(
 );
     integer i;
     always @(*) begin
-        bin = {W{1'b0}};
+        bin = 0;
         for (i = 0; i < N; i = i + 1)
-            if (oh[i]) bin = bin | i[W-1:0];
+            if (oh[i]) bin = bin | i;
     end
 endmodule

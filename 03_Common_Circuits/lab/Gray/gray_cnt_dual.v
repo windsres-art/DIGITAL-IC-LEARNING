@@ -13,13 +13,13 @@ module gray_cnt_dual #(
     output reg [N-1:0] bin,
     output reg [N-1:0] gray
 );
-    wire [N-1:0] bin_nxt  = bin + {{(N-1){1'b0}}, en};
+    wire [N-1:0] bin_nxt  = bin + en;
     wire [N-1:0] gray_nxt = bin_nxt ^ (bin_nxt >> 1);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            bin  <= {N{1'b0}};
-            gray <= {N{1'b0}};
+            bin  <= 0;
+            gray <= 0;
         end else begin
             bin  <= bin_nxt;
             gray <= gray_nxt;           // 寄存 gray_nxt，而不是 assign gray = bin ^ (bin >> 1)

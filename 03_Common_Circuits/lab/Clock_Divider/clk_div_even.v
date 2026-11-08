@@ -13,20 +13,18 @@ module clk_div_even #(
 );
     localparam HALF = N / 2;
     localparam CW   = (HALF > 1) ? $clog2(HALF) : 1;
-    localparam integer  LAST_I = HALF - 1;
-    localparam [CW-1:0] LAST   = LAST_I[CW-1:0];
 
     reg [CW-1:0] cnt;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cnt     <= {CW{1'b0}};
+            cnt     <= 0;
             clk_out <= 1'b0;
-        end else if (cnt == LAST) begin
-            cnt     <= {CW{1'b0}};
+        end else if (cnt == HALF - 1) begin
+            cnt     <= 0;
             clk_out <= ~clk_out;
         end else begin
-            cnt     <= cnt + 1'b1;
+            cnt     <= cnt + 1;
         end
     end
 

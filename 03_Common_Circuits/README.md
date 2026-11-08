@@ -34,6 +34,8 @@
 
 本章进度：第 1–15 节全部完成。
 
+**代码写法**：例程优先使用 `q <= 0`、`cnt <= WIDTH`、`cnt <= cnt - 1`，直接表达清零、装载和计数。寄存器仍按所需位宽声明；参数按各模块注明的范围使用。状态名、移位拼接、进位扩展和全 1 掩码保留，因为它们直接表达电路含义。
+
 ---
 
 
@@ -122,8 +124,8 @@ wire wr_fire = wr_en & ~full;          // 满时写被忽略
 wire rd_fire = rd_en & ~empty;         // 空时读被忽略
 
 always @(posedge clk or negedge rst_n)
-    if (!rst_n)       wptr <= {(AW+1){1'b0}};
-    else if (wr_fire) wptr <= wptr + 1'b1;
+    if (!rst_n)       wptr <= 0;
+    else if (wr_fire) wptr <= wptr + 1;
 
 // 存储体不带复位：才能映射成 SRAM / 寄存器堆
 always @(posedge clk)
@@ -131,7 +133,7 @@ always @(posedge clk)
 
 // 同步读：rd_en 有效的下一拍 rdata 才是读出的数据
 always @(posedge clk or negedge rst_n)
-    if (!rst_n)       rdata <= {DW{1'b0}};
+    if (!rst_n)       rdata <= 0;
     else if (rd_fire) rdata <= mem[rptr[AW-1:0]];
 
 assign empty = (wptr == rptr);
@@ -220,31 +222,15 @@ empty = (rgray == wgray_sync);
 本章有两份异步 FIFO：
 
 - `lab/FIFO/FIFO.v`：早期写的学习版本，模块名 `FIFO_async`，第 07 章 STA 实验在用它，所以保留不动。调试过程和修过的 bug 见 `lab/FIFO/README.md`。
-- `lab/FIFO/fifo_async.v`：整理版，Cummings 风格。**面试手写建议按这一版**。
+- [fifo_async.v](lab/FIFO/fifo_async.v) 是手写复习版。先看 `mem` 的两个端口，再沿写域的 `wr_fire → wbin_next → wgray_next → wfull` 读一遍。读域对称。[精简前的源码](lab/FIFO/fifo_async.original.v.bak) 可供对照。
 
-整理版写域（读域对称）：
+写指针在一次写入被接受时前进一步。即使本拍没写，对侧也可能刚读走数据，所以每个写时钟沿都要重新判断满标志。
 
 ```verilog
-wire        wr_fire   = wr_en & ~wfull;
-wire [AW:0] wbin_nxt  = wbin + {{AW{1'b0}}, wr_fire};
-wire [AW:0] wgray_nxt = (wbin_nxt >> 1) ^ wbin_nxt;
-
-always @(posedge wclk or negedge wrst_n) begin
-    if (!wrst_n) begin
-        wbin  <= {(AW+1){1'b0}};
-        wgray <= {(AW+1){1'b0}};
-        wfull <= 1'b0;
-    end else begin
-        wbin  <= wbin_nxt;
-        wgray <= wgray_nxt;                // Gray 指针由寄存器直接输出
-        wfull <= (wgray_nxt == {~rgray_w2[AW:AW-1], rgray_w2[AW-2:0]});
-    end
-end
-
-// 读 Gray 同步到写域：两级，级间无逻辑
-always @(posedge wclk or negedge wrst_n)
-    if (!wrst_n) begin rgray_w1 <= 0; rgray_w2 <= 0; end
-    else         begin rgray_w1 <= rgray; rgray_w2 <= rgray_w1; end
+wire wr_fire = wr_en && !wfull;
+wire [AW:0] wbin_next  = wr_fire ? wbin + 1 : wbin;
+wire [AW:0] wgray_next = wbin_next ^ (wbin_next >> 1);
+wire [AW:0] full_mark  = {~rgray_w2[AW:AW-1], rgray_w2[AW-2:0]};
 ```
 
 两版的区别：
@@ -252,7 +238,7 @@ always @(posedge wclk or negedge wrst_n)
 
 |         | `FIFO.v`                                                   | `fifo_async.v`                   |
 | ------- | ---------------------------------------------------------- | -------------------------------- |
-| Gray 指针 | 二进制寄存器 + 组合 XOR：`assign w_pointer_gray = (bin >> 1) ^ bin` | 用 `wbin_nxt` 算出下一拍 Gray，**直接寄存** |
+| Gray 指针 | 二进制寄存器 + 组合 XOR：`assign w_pointer_gray = (bin >> 1) ^ bin` | 用 `wbin_next` 算出下一拍 Gray，**直接寄存** |
 | 满空标志    | 组合比较                                                       | 寄存器输出，用本侧下一拍指针比较                 |
 | 存储体     | 带复位清零                                                      | 不带复位                             |
 
@@ -446,18 +432,17 @@ PASS
 **可加载可逆模 N 计数器**（`lab/Counter/counter_load.v`，MAX = 11 即模 12）：
 
 ```verilog
-localparam [WIDTH-1:0] MAXV = MAX;
-wire at_max = (cnt == MAXV);
-wire at_min = (cnt == {WIDTH{1'b0}});
+wire at_max = (cnt == MAX);
+wire at_min = (cnt == 0);
 
 assign tc = en & ~load & (up ? at_max : at_min);
 
 always @(posedge clk or negedge rst_n) begin
-    if (!rst_n)     cnt <= {WIDTH{1'b0}};
+    if (!rst_n)     cnt <= 0;
     else if (load)  cnt <= din;                  // load 优先于 en
     else if (en) begin
-        if (up) cnt <= at_max ? {WIDTH{1'b0}} : cnt + 1'b1;
-        else    cnt <= at_min ? MAXV          : cnt - 1'b1;
+        if (up) cnt <= at_max ? 0 : cnt + 1;
+        else    cnt <= at_min ? MAX : cnt - 1;
     end
 end
 ```
@@ -470,8 +455,8 @@ for (g = 0; g < DIGITS; g = g + 1) begin : g_digit
     reg [3:0] d;
     wire      is9 = (d == 4'd9);
     always @(posedge clk or negedge rst_n)
-        if (!rst_n)        d <= 4'd0;
-        else if (carry[g]) d <= is9 ? 4'd0 : d + 4'd1;
+        if (!rst_n)        d <= 0;
+        else if (carry[g]) d <= is9 ? 0 : d + 1;
     assign carry[g+1]    = carry[g] & is9;
     assign bcd[4*g +: 4] = d;
 end
@@ -482,13 +467,12 @@ end
 **环形计数器**（`lab/Counter/counter_ring.v`）：
 
 ```verilog
-localparam [N-1:0] INIT = {{(N-1){1'b0}}, 1'b1};
 // 合法 ⇔ 独热：非 0，且去掉最低位的 1 之后为 0
-wire legal = (q != {N{1'b0}}) && ((q & (q - INIT)) == {N{1'b0}});
+wire legal = (q != 0) && ((q & (q - 1)) == 0);
 
 always @(posedge clk or negedge rst_n)
-    if (!rst_n)                    q <= INIT;
-    else if (SELF_START && !legal) q <= INIT;     // 自启动
+    if (!rst_n)                    q <= 1;
+    else if (SELF_START && !legal) q <= 1;     // 自启动
     else if (en)                   q <= {q[N-2:0], q[N-1]};
 ```
 
@@ -498,11 +482,11 @@ always @(posedge clk or negedge rst_n)
 
 ```verilog
 wire [N-2:0] trans = q[N-1:1] ^ q[N-2:0];                    // 相邻位是否不同
-wire         legal = ((trans & (trans - ONE)) == {(N-1){1'b0}});  // 至多一个 1
+wire         legal = ((trans & (trans - 1)) == 0);  // 至多一个 1
 
 always @(posedge clk or negedge rst_n)
-    if (!rst_n)                    q <= {N{1'b0}};
-    else if (SELF_START && !legal) q <= {N{1'b0}};
+    if (!rst_n)                    q <= 0;
+    else if (SELF_START && !legal) q <= 0;
     else if (en)                   q <= {q[N-2:0], ~q[N-1]};
 ```
 
@@ -515,7 +499,7 @@ Johnson 译码只需要看相邻两位，比如 N = 4 时 `0000` ⇔ `~q[3] & ~q
 
 | 错误                              | 后果                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------- |
-| 模 N 写成 `if (cnt == N) cnt <= 0` | 实际计了 N+1 个状态（0~N）。用变异测试验证过：把回绕条件改成 `MAXV + 1`，TB 立刻报 `cnt=12`，模型期望 `0` |
+| 模 N 写成 `if (cnt == N) cnt <= 0` | 实际计了 N+1 个状态（0~N）。用变异测试验证过：把回绕条件改成 `MAX + 1`，TB 立刻报 `cnt=12`，模型期望 `0` |
 | `tc` 不带 `en`                    | `en = 0` 期间 `tc` 一直为 1，下一级每拍都加                                         |
 | `tc` 再打一拍输出                     | 晚一拍，和下一级对不上                                                            |
 | 用 `tc` 或 `cnt[i]` 做下一级的时钟       | 变成行波计数器，引入新时钟域                                                         |
@@ -674,12 +658,12 @@ always @(posedge clk or negedge rst_n) begin
         pout_vld <= 1'b0;
         if (sin_vld) begin
             sh <= sh_nxt[WIDTH-2:0];
-            if (cnt == LAST) begin
+            if (cnt == WIDTH - 1) begin
                 cnt      <= 0;
                 pout     <= sh_nxt;    // 用移位后的值，否则少最后一位
                 pout_vld <= 1'b1;
             end else
-                cnt <= cnt + 1'b1;
+                cnt <= cnt + 1;
         end
     end
 end
@@ -694,10 +678,18 @@ assign sout     = sh[WIDTH-1];
 assign sout_vld = (cnt != 0);
 assign ready    = (cnt <= 1);          // 最后一位输出时就能接收下一个字
 
-always @(posedge clk or negedge rst_n)
-    if (!rst_n)              begin sh <= 0;  cnt <= 0;     end
-    else if (load && ready)  begin sh <= pin; cnt <= WIDTH; end
-    else if (sout_vld)       begin sh <= {sh[WIDTH-2:0], 1'b0}; cnt <= cnt - 1; end
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        sh  <= 0;
+        cnt <= 0;
+    end else if (load && ready) begin
+        sh  <= pin;
+        cnt <= WIDTH;
+    end else if (sout_vld) begin
+        sh  <= {sh[WIDTH-2:0], 1'b0};
+        cnt <= cnt - 1;
+    end
+end
 ```
 
 **LFSR**（`lab/Shift_LFSR/lfsr.v`）：`TAPS` 用掩码表示，抽头 k 对应 bit k−1：
@@ -710,7 +702,7 @@ wire fib_fb = ^(q & TAPS);             // 归约异或：所有抽头位异或
 always @(posedge clk or negedge rst_n)
     if (!rst_n) q <= SEED;             // SEED 不能为 0
     else if (en) begin
-        if (GALOIS) q <= {q[N-2:0], 1'b0} ^ (q[N-1] ? GMASK : {N{1'b0}});
+        if (GALOIS) q <= {q[N-2:0], 1'b0} ^ (q[N-1] ? GMASK : 0);
         else        q <= {q[N-2:0], fib_fb};
     end
 ```
@@ -1016,11 +1008,11 @@ always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
         cnt     <= 0;
         clk_out <= 1'b0;
-    end else if (cnt == LAST) begin    // LAST = N/2 - 1
+    end else if (cnt == HALF - 1) begin    // HALF = N / 2
         cnt     <= 0;
         clk_out <= ~clk_out;
     end else begin
-        cnt     <= cnt + 1'b1;
+        cnt     <= cnt + 1;
     end
 end
 ```
@@ -1028,10 +1020,10 @@ end
 **奇数分频**（`lab/Clock_Divider/clk_div_odd.v`）：
 
 ```verilog
-wire [CW-1:0] cnt_nxt = (cnt == LAST) ? 0 : cnt + 1'b1;   // LAST = N-1
+wire [CW-1:0] cnt_nxt = (cnt == N - 1) ? 0 : cnt + 1;
 
 always @(posedge clk or negedge rst_n)
-    if (!rst_n) begin cnt <= LAST; clk_p <= 1'b0; end
+    if (!rst_n) begin cnt <= N - 1; clk_p <= 1'b0; end
     else        begin cnt <= cnt_nxt; clk_p <= (cnt_nxt < HI); end   // HI = (N+1)/2
 
 always @(negedge clk or negedge rst_n)
@@ -1046,10 +1038,10 @@ assign clk_out = clk_p & clk_n;
 **小数分频**（`lab/Clock_Divider/clk_div_frac.v`）：
 
 ```verilog
-wire [AW-1:0] sum = acc + DV;
+wire [AW-1:0] sum = acc + D;
 always @(posedge clk or negedge rst_n)
     if (!rst_n)          begin acc <= 0;         tick <= 1'b0; end
-    else if (sum >= MV)  begin acc <= sum - MV;  tick <= 1'b1; end
+    else if (sum >= M)   begin acc <= sum - M;  tick <= 1'b1; end
     else                 begin acc <= sum;       tick <= 1'b0; end
 ```
 
@@ -1216,7 +1208,7 @@ always @(posedge clk or negedge rst_n)                      // Moore：用 next_
 **移位寄存器写法**（`lab/FSM_Seq/seq_detect_shift.v`）：
 
 ```verilog
-wire full_enough = USE_FILL ? (fill == LAST) : 1'b1;      // 窗口里已有 LEN-1 个有效位
+wire full_enough = USE_FILL ? (fill == LEN - 1) : 1'b1;      // 窗口里已有 LEN-1 个有效位
 assign dout = full_enough && ({win, din} == PATTERN);
 
 always @(posedge clk or negedge rst_n)
@@ -1224,7 +1216,7 @@ always @(posedge clk or negedge rst_n)
     else begin
         win <= {win[LEN-3:0], din};
         if (dout && !OVERLAP)  fill <= 0;                   // 不重叠：匹配后重新收满
-        else if (fill != LAST) fill <= fill + 1'b1;
+        else if (fill != LEN - 1) fill <= fill + 1;
     end
 ```
 
@@ -1378,7 +1370,7 @@ dreq & ~(...)     = 0001_0000     从 bit 2 往上找到的第一个 1 在 bit 4
 **固定优先级**（`lab/Arbiter/arb_fixed.v`）：
 
 ```verilog
-assign gnt = req & ~(req - {{(N-1){1'b0}}, 1'b1});
+assign gnt = req & ~(req - 1);
 ```
 
 **轮询，双倍宽度**（`lab/Arbiter/arb_rr.v`）：
@@ -1386,7 +1378,7 @@ assign gnt = req & ~(req - {{(N-1){1'b0}}, 1'b1});
 ```verilog
 wire [N-1:0]   base = {last[N-2:0], last[N-1]};           // 上次授权循环左移
 wire [2*N-1:0] dreq = {req, req};
-wire [2*N-1:0] dgnt = dreq & ~(dreq - {{N{1'b0}}, base});
+wire [2*N-1:0] dgnt = dreq & ~(dreq - base);
 assign gnt = dgnt[N-1:0] | dgnt[2*N-1:N];
 
 always @(posedge clk or negedge rst_n)
@@ -1397,10 +1389,10 @@ always @(posedge clk or negedge rst_n)
 **轮询，掩码**（`lab/Arbiter/arb_rr_mask.v`）：
 
 ```verilog
-wire [N-1:0] mask  = ~(last | (last - ONE));              // 比 last 高的位
+wire [N-1:0] mask  = ~(last | (last - 1));              // 比 last 高的位
 wire [N-1:0] req_m = req & mask;
-wire [N-1:0] gnt_m = req_m & ~(req_m - ONE);
-wire [N-1:0] gnt_u = req   & ~(req   - ONE);
+wire [N-1:0] gnt_m = req_m & ~(req_m - 1);
+wire [N-1:0] gnt_u = req   & ~(req   - 1);
 assign gnt = (|req_m) ? gnt_m : gnt_u;
 ```
 
@@ -1730,13 +1722,13 @@ end
 `lab/Gray/gray_cnt_dual.v` 同时寄存二进制和 Gray，都由 `bin_nxt` 算出（异步 FIFO 指针就是这样写的）：
 
 ```verilog
-wire [N-1:0] bin_nxt  = bin + {{(N-1){1'b0}}, en};
+wire [N-1:0] bin_nxt  = bin + en;
 wire [N-1:0] gray_nxt = bin_nxt ^ (bin_nxt >> 1);
 
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        bin  <= {N{1'b0}};
-        gray <= {N{1'b0}};
+        bin  <= 0;
+        gray <= 0;
     end else begin
         bin  <= bin_nxt;
         gray <= gray_nxt;           // 寄存 gray_nxt，而不是 assign gray = bin ^ (bin >> 1)
@@ -1753,10 +1745,10 @@ always @(*) begin
         b[i] = b[i+1] ^ gray[i];
 end
 
-wire [N-1:0] b_nxt = b + {{(N-1){1'b0}}, en};
+wire [N-1:0] b_nxt = b + en;
 
 always @(posedge clk or negedge rst_n)
-    if (!rst_n) gray <= {N{1'b0}};
+    if (!rst_n) gray <= 0;
     else        gray <= b_nxt ^ (b_nxt >> 1);
 ```
 
@@ -1902,9 +1894,9 @@ din7 ──┘       ▲                        din7 ──[AND sel7]──┘
 
 ```verilog
 always @(*) begin
-    idx = {W{1'b0}};                // 默认值：不推断 latch
+    idx = 0;                // 默认值：不推断 latch
     for (i = 0; i < N; i = i + 1)
-        if (req[i]) idx = i[W-1:0];
+        if (req[i]) idx = i;
 end
 
 assign valid = |req;
@@ -1912,19 +1904,19 @@ assign valid = |req;
 
 N 固定时也可以用 `casez` 加 `?` 通配写成一张表，直观，但不能参数化。只需要独热结果（而不是下标）时，`req & ~(req - 1)` 更简单（第 7 节，最低位优先）。
 
-**译码器**（`lab/Enc_Dec_Mux/decoder.v`）：把 `en` 放在第 0 位再左移 `in` 位，一行写完，位宽随 W 变化。
+**译码器**（`lab/Enc_Dec_Mux/decoder.v`）：把 `en` 左移 `in` 位，结果赋给 `2^W` 位的输出；`en=1` 时只有选中的位为 1。
 
 ```verilog
-assign out = {{((1 << W) - 1){1'b0}}, en} << in;
+assign out = en << in;
 ```
 
 **独热码转二进制**（`lab/Enc_Dec_Mux/onehot2bin.v`）：每个下标或进结果，没有优先级链。
 
 ```verilog
 always @(*) begin
-    bin = {W{1'b0}};
+    bin = 0;
     for (i = 0; i < N; i = i + 1)
-        if (oh[i]) bin = bin | i[W-1:0];
+        if (oh[i]) bin = bin | i;
 end
 ```
 
@@ -1938,7 +1930,7 @@ assign dout = din[sel*W +: W];
 
 ```verilog
 always @(*) begin
-    dout = {W{1'b0}};
+    dout = 0;
     for (i = 0; i < N; i = i + 1)
         dout = dout | (din[i*W +: W] & {W{sel[i]}});
 end
@@ -2139,10 +2131,10 @@ end
 
 ```verilog
 always @(posedge clk)
-    if (we && waddr != {AW{1'b0}}) rf[waddr] <= wdata;
+    if (we && waddr != 0) rf[waddr] <= wdata;
 
 wire byp1 = (BYPASS != 0) && we && (waddr == raddr1);
-assign rdata1 = (raddr1 == {AW{1'b0}}) ? {DW{1'b0}} : byp1 ? wdata : rf[raddr1];
+assign rdata1 = (raddr1 == 0) ? 0 : byp1 ? wdata : rf[raddr1];
 ```
 
 寄存器不复位（RISC-V 规定复位后通用寄存器的值未定义），省面积。
@@ -2432,7 +2424,7 @@ DW = 32 且 REFIN = 1 时，整个字低位先进，等价于把字节按**小�
 
 ```verilog
 always @(*) begin
-    code = {(N+1){1'b0}};
+    code = 0;
     di   = 0;
     for (p = 1; p <= N; p = p + 1)
         if ((p & (p - 1)) != 0) begin       // 不是 2 的幂 → 数据位
@@ -2452,7 +2444,7 @@ end
 **SECDED 译码器**（`lab/Parity_CRC_ECC/ecc_secded_dec.v`）：算校验子和总体奇偶，按 12.4 节的表判决。
 
 ```verilog
-syn = {R{1'b0}};
+syn = 0;
 for (j = 0; j < R; j = j + 1)
     for (p = 1; p <= N; p = p + 1)
         if (((p >> j) & 1) != 0) syn[j] = syn[j] ^ code[p];
@@ -2460,9 +2452,9 @@ ovr = ^code;
 
 fixed = code;
 if (ovr) begin
-    if (syn <= NMAX) begin fixed[syn] = ~fixed[syn]; err_corr = 1'b1; end
+    if (syn <= N) begin fixed[syn] = ~fixed[syn]; err_corr = 1'b1; end
     else             err_uncorr = 1'b1;
-end else if (syn != {R{1'b0}}) begin
+end else if (syn != 0) begin
     err_uncorr = 1'b1;
 end
 ```
@@ -2888,15 +2880,15 @@ fill:  0 →(+24) 24 →(+24) 48 →(-32 +24) 40 →(-32 +24) 32 →(-32 +24) 24
 ```verilog
 assign in_ready = ~out_valid | out_ready;
 wire in_fire   = in_valid & in_ready;
-wire done_word = in_fire & ((cnt == LAST) | in_last);      // 满了，或者包结束
-wire [RATIO-1:0] slot = {{(RATIO-1){1'b0}}, 1'b1} << cnt;
+wire done_word = in_fire & ((cnt == RATIO - 1) | in_last);      // 满了，或者包结束
+wire [RATIO-1:0] slot = 1 << cnt;
 
 always @(posedge clk or negedge rst_n)
     if (!rst_n) begin cnt <= 0; out_valid <= 0; out_keep <= 0; out_last <= 0; end
     else begin
         if (in_fire) begin
-            cnt      <= done_word ? 0 : cnt + 1'b1;
-            out_keep <= ((cnt == 0) ? {RATIO{1'b0}} : out_keep) | slot;  // 新字先清 keep
+            cnt      <= done_word ? 0 : cnt + 1;
+            out_keep <= ((cnt == 0) ? 0 : out_keep) | slot;  // 新字先清 keep
         end
         if (done_word)      out_valid <= 1'b1;
         else if (out_ready) out_valid <= 1'b0;
@@ -2931,15 +2923,15 @@ always @(posedge clk)
 **gearbox**（`lab/Width_Conv/width_gearbox.v`）：
 
 ```verilog
-assign out_valid = (fill >= OUT_F);
+assign out_valid = (fill >= OUT_W);
 assign out_data  = buf_q[OUT_W-1:0];
-wire [FW-1:0]  fill_aft = out_fire ? fill - OUT_F : fill;     // 本拍取走之后还剩多少
-assign in_ready  = (fill_aft <= CAP_F - IN_F);
+wire [FW-1:0]  fill_aft = out_fire ? fill - OUT_W : fill;     // 本拍取走之后还剩多少
+assign in_ready  = (fill_aft <= CAP - IN_W);
 
 wire [CAP-1:0] kept   = out_fire ? (buf_q >> OUT_W) : buf_q;
 wire [CAP-1:0] mask   = ~({CAP{1'b1}} << fill_aft);          // 有效位以上清零
-wire [CAP-1:0] ins    = {{(CAP-IN_W){1'b0}}, in_data} << fill_aft;
-wire [CAP-1:0] buf_nx = (kept & mask) | (in_fire ? ins : {CAP{1'b0}});
+wire [CAP-1:0] ins    = in_data << fill_aft;
+wire [CAP-1:0] buf_nx = (kept & mask) | (in_fire ? ins : 0);
 ```
 
 `in_ready` 依赖 `out_ready`（本拍取没取走），是组合路径；协议允许 ready 依赖 ready，要切断就在输出端加一级 skid buffer（第 13 节）。
@@ -3092,7 +3084,7 @@ press    ____________________________|‾|______________________________________
 wire [CW-1:0] per_use  = SHADOW ? period_q : period;
 wire [CW:0]   duty_use = SHADOW ? duty_q   : duty;
 wire          wrap     = (cnt >= per_use);            // >=：周期被改小时也能立即回绕
-wire [CW-1:0] cnt_nxt  = wrap ? {CW{1'b0}} : cnt + 1'b1;
+wire [CW-1:0] cnt_nxt  = wrap ? 0 : cnt + 1;
 wire [CW:0]   duty_nxt = (SHADOW && wrap) ? duty : duty_use;   // 新周期第 0 拍就用新 duty
 
 always @(posedge clk or negedge rst_n)
@@ -3120,12 +3112,12 @@ always @(posedge clk or negedge rst_n)
     else begin
         press <= 1'b0;  release_p <= 1'b0;
         if (key_s == key_level)  cnt <= 0;             // 一回到原电平就重新计
-        else if (cnt == LAST) begin                   // 连续 N 拍不同
+        else if (cnt == N - 1) begin                   // 连续 N 拍不同
             cnt       <= 0;
             key_level <= key_s;
             press     <= (key_s != IDLE);
             release_p <= (key_s == IDLE);
-        end else cnt <= cnt + 1'b1;
+        end else cnt <= cnt + 1;
     end
 ```
 
@@ -3230,6 +3222,7 @@ wsl -u root -e bash -lc "cd '/mnt/c/Users/Administrator/Desktop/workspace/DIGITA
 
 注意：
 
+- 部分学习版例程直接将整数参数与窄寄存器比较或赋值。对应脚本仅关闭已审查的 `WIDTHEXPAND`、`WIDTHTRUNC` 提示；其余 `-Wall` 检查仍保留，故意演示的 latch 也仍会被报告。
 - Windows 下编辑过的 `.sh` 是 CRLF 换行，运行前要 `sed -i 's/\r$//'`，否则 bash 报 `$'\r': command not found`。上面的命令已经带了。
 - 在 PowerShell 的双引号字符串里，`$` 要写成 ``$`。
 - 产生的 `*.vcd`、`*_sim`、`build_mut/` 是构建产物，不需要提交。

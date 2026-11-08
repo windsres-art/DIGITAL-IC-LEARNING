@@ -153,17 +153,20 @@ module rv32i_trap #(
         if (m_valid && m_reg_we && m_rd != 5'd0 && m_rd == x_rs2) ex_b_fwd = m_result;
     end
 
+    // 与基础核共用译码：jal / branch 的 ALU 算本条 PC+imm，jalr 算前递后的 rs1+imm。
     wire [31:0] alu_a = x_alu_a_zero ? 32'd0 : x_alu_a_pc ? x_pc : ex_a_fwd;
     wire [31:0] alu_b = x_alu_b_imm  ? x_imm : ex_b_fwd;
     wire [31:0] alu_y;
     rv32i_alu u_alu (.a(alu_a), .b(alu_b), .op(x_alu_op), .y(alu_y));
 
+    // 分支比较器直接接前递后的寄存器值；不使用 ALU 已选择的 PC / imm。
     wire br_cond;
     rv32i_branch u_br (.a(ex_a_fwd), .b(ex_b_fwd), .funct3(x_funct3), .taken(br_cond));
 
     wire [31:0] x_pc_plus4 = x_pc + 32'd4;
     wire        ex_taken   = x_is_jal | x_is_jalr | (x_is_branch & br_cond);
-    wire [31:0] ex_target  = x_is_jalr ? {alu_y[31:1], 1'b0} : x_pc + x_imm;
+    // 目标统一来自 ALU；清 jalr 的 bit 0 后，仍由下面的异常逻辑检查目标 bit 1。
+    wire [31:0] ex_target  = x_is_jalr ? {alu_y[31:1], 1'b0} : alu_y;
 
     wire [3:0]  unused_strb;
     wire [31:0] unused_wd, unused_ld;

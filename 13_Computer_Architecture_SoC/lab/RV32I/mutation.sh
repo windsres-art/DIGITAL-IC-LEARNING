@@ -41,7 +41,7 @@ sed -e 's/{{24{ld_b\[7\]}}, ld_b}/{24'"'"'b0, ld_b}/' -e 's/{{16{ld_h\[15\]}}, l
 run m2 rv32i_lsu.v build_mut/lsu_m2.v
 
 echo "===== M3: jalr 不清最低位 ====="
-sed 's/is_jalr                 ? {alu_y\[31:1\], 1'"'"'b0}/is_jalr                 ? alu_y/' rv32i_single.v > build_mut/single_m3.v
+sed 's/is_jalr ? {alu_y\[31:1\], 1'"'"'b0}/is_jalr ? alu_y/' rv32i_single.v > build_mut/single_m3.v
 run m3 rv32i_single.v build_mut/single_m3.v
 
 echo "===== M4: sltu 用有符号比较 ====="

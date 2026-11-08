@@ -6,7 +6,7 @@
 //     检测到非独热就拉回初始状态。
 // =============================================================================
 module counter_ring #(
-    parameter N          = 4,
+    parameter N          = 4,           // >= 2
     parameter SELF_START = 1            // 0：去掉非法状态检测，仅用于演示
 )(
     input              clk,
@@ -14,14 +14,12 @@ module counter_ring #(
     input              en,
     output reg [N-1:0] q
 );
-    localparam [N-1:0] INIT = {{(N-1){1'b0}}, 1'b1};
-
     // 独热：非 0 且 q & (q-1) == 0（去掉最低位的 1 后为 0）
-    wire legal = (q != {N{1'b0}}) && ((q & (q - INIT)) == {N{1'b0}});
+    wire legal = (q != 0) && ((q & (q - 1)) == 0);
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)      q <= INIT;
-        else if (SELF_START && !legal) q <= INIT;
+        if (!rst_n)      q <= 1;
+        else if (SELF_START && !legal) q <= 1;
         else if (en)     q <= {q[N-2:0], q[N-1]};
     end
 

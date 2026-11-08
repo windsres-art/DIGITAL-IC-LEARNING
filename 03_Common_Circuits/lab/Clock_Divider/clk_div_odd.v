@@ -18,19 +18,16 @@ module clk_div_odd #(
     output clk_p_out                    // 只用上升沿的结果，占空比不是 50%，用于对比
 );
     localparam CW = $clog2(N);
-    localparam integer  LAST_I = N - 1;
-    localparam integer  HI_I   = (N + 1) / 2;
-    localparam [CW-1:0] LAST   = LAST_I[CW-1:0];
-    localparam [CW-1:0] HI     = HI_I[CW-1:0];
+    localparam HI = (N + 1) / 2;       // 上升沿分频支路的高电平周期数
 
     reg  [CW-1:0] cnt;
     reg           clk_p, clk_n;
-    wire [CW-1:0] cnt_nxt = (cnt == LAST) ? {CW{1'b0}} : cnt + 1'b1;
+    wire [CW-1:0] cnt_nxt = (cnt == N - 1) ? 0 : cnt + 1;
 
     // clk_p 与 cnt 对齐：cnt 在 0 .. HI-1 时为高
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            cnt   <= LAST;              // 复位后第一个沿进入 cnt=0，clk_p 拉高
+            cnt   <= N - 1;              // 复位后第一个沿进入 cnt=0，clk_p 拉高
             clk_p <= 1'b0;
         end else begin
             cnt   <= cnt_nxt;

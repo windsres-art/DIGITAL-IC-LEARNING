@@ -24,7 +24,7 @@ module ecc_secded_enc #(
     integer p, j, di;
     reg     par;
     always @(*) begin
-        code = {(N+1){1'b0}};
+        code = 0;
         di   = 0;
         for (p = 1; p <= N; p = p + 1)
             if ((p & (p - 1)) != 0) begin       // 不是 2 的幂 → 数据位

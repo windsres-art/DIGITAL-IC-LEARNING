@@ -19,7 +19,7 @@ module arb_rr #(
     reg  [N-1:0]   last;
     wire [N-1:0]   base = {last[N-2:0], last[N-1]};
     wire [2*N-1:0] dreq = {req, req};
-    wire [2*N-1:0] dgnt = dreq & ~(dreq - {{N{1'b0}}, base});
+    wire [2*N-1:0] dgnt = dreq & ~(dreq - base);
 
     assign gnt = dgnt[N-1:0] | dgnt[2*N-1:N];
 
